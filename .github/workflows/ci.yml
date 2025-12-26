@@ -1,0 +1,178 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  build-iso:
+    name: Build ISO
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ca-certificates curl git \
+            build-essential pkg-config \
+            cpio zstd \
+            busybox-static \
+            python3 \
+            systemd-ukify \
+            systemd-boot-efi \
+            file \
+            xorriso \
+            dosfstools mtools \
+            jq
+      
+      - name: Download latest installer binary
+        run: |
+          # Get latest release from installer repo
+          LATEST_RELEASE=$(curl -s https://api.github.com/repos/Truthdb/installer/releases/latest)
+          
+          # Check if there are any releases
+          if echo "$LATEST_RELEASE" | jq -e '.message == "Not Found"' > /dev/null; then
+            echo "No releases found in installer repo, will need to build from source or use placeholder"
+            # For now, create a placeholder binary for testing
+            mkdir -p installer-bin
+            echo '#!/bin/sh' > installer-bin/truthdb-installer
+            echo 'echo "TruthDB Installer Placeholder"' >> installer-bin/truthdb-installer
+            chmod +x installer-bin/truthdb-installer
+          else
+            # Download the installer binary from the latest release
+            DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | select(.name | contains("truthdb-installer")) | select(.name | endswith(".tar.gz")) | .browser_download_url')
+            
+            if [ -z "$DOWNLOAD_URL" ]; then
+              echo "No installer binary found in latest release"
+              exit 1
+            fi
+            
+            echo "Downloading installer from: $DOWNLOAD_URL"
+            mkdir -p installer-bin
+            cd installer-bin
+            curl -L -o installer.tar.gz "$DOWNLOAD_URL"
+            tar xzf installer.tar.gz
+            chmod +x truthdb-installer
+            cd ..
+          fi
+          
+          # Verify the binary exists
+          ls -lh installer-bin/truthdb-installer
+          file installer-bin/truthdb-installer
+      
+      - name: Download latest kernel
+        run: |
+          # Get latest release from installer-kernel repo
+          LATEST_RELEASE=$(curl -s https://api.github.com/repos/Truthdb/installer-kernel/releases/latest)
+          
+          # Check if there are any releases
+          if echo "$LATEST_RELEASE" | jq -e '.message == "Not Found"' > /dev/null; then
+            echo "No releases found in installer-kernel repo"
+            exit 1
+          fi
+          
+          # Download the kernel (BOOTX64.EFI) from the latest release
+          DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | select(.name == "BOOTX64.EFI") | .browser_download_url')
+          
+          if [ -z "$DOWNLOAD_URL" ]; then
+            echo "No BOOTX64.EFI found in latest release"
+            exit 1
+          fi
+          
+          echo "Downloading kernel from: $DOWNLOAD_URL"
+          mkdir -p kernel-bin
+          curl -L -o kernel-bin/BOOTX64.EFI "$DOWNLOAD_URL"
+          
+          # Verify the kernel exists
+          ls -lh kernel-bin/BOOTX64.EFI
+          file kernel-bin/BOOTX64.EFI
+      
+      - name: Build ISO
+        run: |
+          # Set environment variables for the build script
+          export KERNEL_SRC="${PWD}/kernel-bin/BOOTX64.EFI"
+          export INSTALLER_BIN="${PWD}/installer-bin/truthdb-installer"
+          export ISO_NAME="truthdb-installer.iso"
+          
+          # Verify files exist
+          ls -lh "$KERNEL_SRC" "$INSTALLER_BIN"
+          
+          # Build the initramfs
+          rm -rf rootfs
+          mkdir -p rootfs/{bin,sbin,etc,proc,sys,dev,run,tmp}
+          
+          cp /bin/busybox rootfs/bin/busybox
+          chmod +x rootfs/bin/busybox
+          ln -sf /bin/busybox rootfs/sbin/init
+          ln -sf /bin/busybox rootfs/bin/sh
+          
+          cp "$INSTALLER_BIN" rootfs/bin/truthdb-installer
+          chmod +x rootfs/bin/truthdb-installer
+          
+          cat > rootfs/etc/inittab <<'EOF'
+          ::sysinit:/bin/busybox mount -t proc proc /proc
+          ::sysinit:/bin/busybox mount -t sysfs sysfs /sys
+          ::sysinit:/bin/busybox mount -t devtmpfs devtmpfs /dev
+          ::respawn:/bin/truthdb-installer
+          ::restart:/bin/busybox reboot -f
+          EOF
+          
+          rm -f initramfs.cpio initramfs.cpio.zst
+          ( cd rootfs && find . -print0 | cpio --null -ov --format=newc ) > initramfs.cpio
+          zstd -19 -T0 initramfs.cpio -o initramfs.cpio.zst
+          
+          # Create cmdline
+          cat > cmdline.txt <<'EOF'
+          console=ttyS0 earlyprintk=serial loglevel=7 rdinit=/sbin/init
+          EOF
+          
+          # Build UKI
+          cp "$KERNEL_SRC" ./vmlinuz
+          
+          ukify build \
+            --linux ./vmlinuz \
+            --initrd ./initramfs.cpio.zst \
+            --cmdline @./cmdline.txt \
+            --output ./TruthDBInstaller.efi
+          
+          file ./TruthDBInstaller.efi
+          
+          # Create EFI image
+          rm -f efi.img
+          dd if=/dev/zero of=efi.img bs=1M count=128
+          mkfs.vfat -F 32 efi.img
+          
+          mmd   -i efi.img ::/EFI
+          mmd   -i efi.img ::/EFI/BOOT
+          mcopy -i efi.img ./TruthDBInstaller.efi ::/EFI/BOOT/BOOTX64.EFI
+          
+          # Create ISO
+          rm -f "$ISO_NAME"
+          
+          xorriso -as mkisofs \
+            -R -J \
+            -o "$ISO_NAME" \
+            -eltorito-alt-boot \
+            -e efi.img \
+            -no-emul-boot \
+            -isohybrid-gpt-basdat \
+            -graft-points efi.img=efi.img
+          
+          echo "ISO ready: $ISO_NAME"
+          ls -lh "$ISO_NAME"
+      
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: truthdb-installer-iso
+          path: truthdb-installer.iso
+          if-no-files-found: error
