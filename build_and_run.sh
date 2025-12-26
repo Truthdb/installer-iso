@@ -3,17 +3,23 @@ set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
 
-# ---- config you must set ----
-KERNEL_SRC="${KERNEL_SRC:-/work/installer-iso/BOOTX64.EFI}"
-INSTALLER_BIN="/work/installer/target/x86_64-unknown-linux-musl/release/truthdb-installer"
+# ================= CONFIG =================
+KERNEL_SRC="${KERNEL_SRC:-/work/installer-kernel/vmlinuz}"
+INSTALLER_BIN="${INSTALLER_BIN:-/work/installer/target/x86_64-unknown-linux-musl/release/truthdb-installer}"
 
-# ---- sanity ----
+ISO_NAME="${ISO_NAME:-truthdb-installer.iso}"
+UKI_NAME="${UKI_NAME:-TruthDBInstaller.efi}"
+
+BUILD_INSTALLER="${BUILD_INSTALLER:-1}"  # 1 = cargo build installer, 0 = assume INSTALLER_BIN already exists
+BOOT_TEST="${BOOT_TEST:-1}"              # 1 = run QEMU boot test of ISO, 0 = just produce ISO
+
+# ================= SANITY =================
 if [[ "$(uname -m)" != "x86_64" ]]; then
-  echo "ERROR: container arch must be x86_64 (use --platform=linux/amd64)"
+  echo "ERROR: must run in linux/amd64 container"
   exit 1
 fi
 
-# ---- deps ----
+# ================= DEPS =================
 apt-get update
 apt-get install -y \
   ca-certificates curl git \
@@ -22,38 +28,36 @@ apt-get install -y \
   busybox-static \
   python3 \
   systemd-ukify \
+  xorriso \
   ovmf qemu-system-x86 \
   file \
-  systemd-boot systemd-boot-efi \
   musl-tools >/dev/null
 
-# ---- rustup (idempotent-ish) ----
-if [[ ! -f "$HOME/.cargo/env" ]]; then
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-fi
-# shellcheck disable=SC1090
-. "$HOME/.cargo/env"
-rustup target add x86_64-unknown-linux-musl >/dev/null
+# ================= RUST (only needed if BUILD_INSTALLER=1) =================
+if [[ "$BUILD_INSTALLER" == "1" ]]; then
+  if [[ ! -f "$HOME/.cargo/env" ]]; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  fi
+  # shellcheck disable=SC1090
+  . "$HOME/.cargo/env"
+  rustup target add x86_64-unknown-linux-musl >/dev/null
 
-# ---- build installer ----
-pushd /work/installer >/dev/null
-cargo build --release --target x86_64-unknown-linux-musl
-popd >/dev/null
-
-if [[ ! -x "$INSTALLER_BIN" ]]; then
-  echo "ERROR: installer binary not found at: $INSTALLER_BIN"
-  exit 1
+  pushd /work/installer >/dev/null
+  cargo build --release --target x86_64-unknown-linux-musl
+  popd >/dev/null
 fi
 
-# ---- prepare working dir ----
+[[ -f "$KERNEL_SRC" ]] || { echo "ERROR: kernel not found: $KERNEL_SRC"; exit 1; }
+[[ -x "$INSTALLER_BIN" ]] || { echo "ERROR: installer binary not found: $INSTALLER_BIN"; exit 1; }
+
+# ================= WORKDIR =================
 cd /work/installer-iso
 
-# ---- initramfs rootfs ----
+# ================= INITRAMFS =================
 rm -rf rootfs
 mkdir -p rootfs/{bin,sbin,etc,proc,sys,dev,run,tmp}
 
 cp /bin/busybox rootfs/bin/busybox
-chmod +x rootfs/bin/busybox
 ln -sf /bin/busybox rootfs/sbin/init
 ln -sf /bin/busybox rootfs/bin/sh
 
@@ -72,49 +76,53 @@ rm -f initramfs.cpio initramfs.cpio.zst
 ( cd rootfs && find . -print0 | cpio --null -ov --format=newc ) > initramfs.cpio
 zstd -19 -T0 initramfs.cpio -o initramfs.cpio.zst
 
-# ---- kernel ----
-if [[ ! -f "$KERNEL_SRC" ]]; then
-  echo "ERROR: KERNEL_SRC does not exist: $KERNEL_SRC"
-  exit 1
-fi
-cp "$KERNEL_SRC" ./vmlinuz
-
-# ---- cmdline ----
+# ================= CMDLINE =================
 cat > cmdline.txt <<'EOF'
 console=ttyS0 earlyprintk=serial loglevel=7 rdinit=/sbin/init
 EOF
 
-# ---- build UKI ----
+# ================= UKI =================
+cp "$KERNEL_SRC" ./vmlinuz
+
 ukify build \
   --linux ./vmlinuz \
   --initrd ./initramfs.cpio.zst \
   --cmdline @./cmdline.txt \
-  --output ./TruthDBInstaller.efi
+  --output "./$UKI_NAME"
 
-file TruthDBInstaller.efi
+file "$UKI_NAME"
 
-# ---- esp dir ----
-rm -rf espdir
-mkdir -p espdir/EFI/BOOT
-cp TruthDBInstaller.efi espdir/EFI/BOOT/BOOTX64.EFI
+# ================= ISO =================
+rm -rf iso
+mkdir -p iso/EFI/BOOT
+cp "$UKI_NAME" iso/EFI/BOOT/BOOTX64.EFI
 
-# ---- OVMF ----
-if [[ ! -f /usr/share/OVMF/OVMF_CODE_4M.fd || ! -f /usr/share/OVMF/OVMF_VARS_4M.fd ]]; then
-  echo "ERROR: Expected OVMF 4M firmware files in /usr/share/OVMF/"
-  exit 1
+xorriso -as mkisofs \
+  -R -J \
+  -o "$ISO_NAME" \
+  -eltorito-alt-boot \
+  -e EFI/BOOT/BOOTX64.EFI \
+  -no-emul-boot \
+  -isohybrid-gpt-basdat \
+  iso
+
+echo "ISO ready: $ISO_NAME"
+
+# ================= BOOT TEST (QEMU) =================
+if [[ "$BOOT_TEST" == "1" ]]; then
+  cp /usr/share/OVMF/OVMF_CODE_4M.fd ./OVMF_CODE.fd
+  cp /usr/share/OVMF/OVMF_VARS_4M.fd ./OVMF_VARS.fd
+
+  exec qemu-system-x86_64 \
+    -m 2048 \
+    -machine q35 \
+    -accel tcg \
+    -nographic \
+    -serial mon:stdio \
+    -drive if=pflash,format=raw,readonly=on,file=./OVMF_CODE.fd \
+    -drive if=pflash,format=raw,file=./OVMF_VARS.fd \
+    -cdrom "$ISO_NAME" \
+    -boot order=d,menu=off \
+    -net none
 fi
-cp /usr/share/OVMF/OVMF_CODE_4M.fd ./OVMF_CODE.fd
-cp /usr/share/OVMF/OVMF_VARS_4M.fd ./OVMF_VARS.fd
 
-# ---- boot ----
-exec qemu-system-x86_64 \
-  -m 2048 \
-  -machine q35 \
-  -accel tcg \
-  -nographic \
-  -serial mon:stdio \
-  -drive if=pflash,format=raw,readonly=on,file=./OVMF_CODE.fd \
-  -drive if=pflash,format=raw,file=./OVMF_VARS.fd \
-  -drive format=raw,file=fat:rw:espdir \
-  -boot order=c,menu=off \
-  -net none
