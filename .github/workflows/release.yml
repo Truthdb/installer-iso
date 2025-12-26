@@ -9,12 +9,9 @@ permissions:
   contents: write
 
 jobs:
-  create-release:
-    name: Create Release
+  build-and-release:
+    name: Build and Release ISO
     runs-on: ubuntu-latest
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-      version: ${{ steps.get_version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -23,61 +20,6 @@ jobs:
       - name: Get version from tag
         id: get_version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-      
-      - name: Generate release notes
-        id: release_notes
-        run: |
-          # Get the previous tag
-          PREV_TAG=$(git describe --abbrev=0 --tags $(git rev-list --tags --skip=1 --max-count=1) 2>/dev/null || echo "")
-          
-          # Generate changelog
-          if [ -z "$PREV_TAG" ]; then
-            echo "First release"
-            CHANGELOG="Initial release of TruthDB Installer ISO"
-          else
-            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --no-merges)
-          fi
-          
-          # Create release body
-          cat > release_notes.md << EOF
-          ## TruthDB Installer ISO ${GITHUB_REF#refs/tags/v}
-          
-          ### Changes
-          $CHANGELOG
-          
-          ### Installation
-          
-          Download the \`truthdb-installer.iso\` file and boot from it on a compatible x86_64 system with UEFI support.
-          
-          ### Components
-          
-          This ISO includes:
-          - TruthDB Installer (version ${GITHUB_REF#refs/tags/v})
-          - TruthDB Installer Kernel (version ${GITHUB_REF#refs/tags/v})
-          EOF
-          
-          echo "notes<<EOF" >> $GITHUB_OUTPUT
-          cat release_notes.md >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-      
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ steps.get_version.outputs.version }}
-          body: ${{ steps.release_notes.outputs.notes }}
-          draft: false
-          prerelease: false
-
-  build-and-upload:
-    name: Build and Upload ISO
-    needs: create-release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
       
       - name: Install dependencies
         run: |
@@ -97,7 +39,7 @@ jobs:
       
       - name: Download matching installer binary
         run: |
-          VERSION="${{ needs.create-release.outputs.version }}"
+          VERSION="${{ steps.get_version.outputs.version }}"
           echo "Looking for installer version v${VERSION}"
           
           # Try to get the matching release from installer repo
@@ -132,7 +74,7 @@ jobs:
       
       - name: Download matching kernel
         run: |
-          VERSION="${{ needs.create-release.outputs.version }}"
+          VERSION="${{ steps.get_version.outputs.version }}"
           echo "Looking for kernel version ${VERSION}"
           
           # Try to get the matching release from installer-kernel repo
@@ -237,25 +179,58 @@ jobs:
       
       - name: Generate checksum
         run: |
-          sha256sum truthdb-installer.iso > truthdb-installer-v${{ needs.create-release.outputs.version }}.iso.sha256
-          cat truthdb-installer-v${{ needs.create-release.outputs.version }}.iso.sha256
+          sha256sum truthdb-installer.iso > truthdb-installer-v${{ steps.get_version.outputs.version }}.iso.sha256
+          cat truthdb-installer-v${{ steps.get_version.outputs.version }}.iso.sha256
       
-      - name: Upload Release Asset - ISO
-        uses: actions/upload-release-asset@v1
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          # Get the previous tag
+          PREV_TAG=$(git describe --abbrev=0 --tags $(git rev-list --tags --skip=1 --max-count=1) 2>/dev/null || echo "")
+          
+          # Generate changelog
+          if [ -z "$PREV_TAG" ]; then
+            echo "First release"
+            CHANGELOG="Initial release of TruthDB Installer ISO"
+          else
+            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --no-merges)
+          fi
+          
+          # Create release body
+          cat > release_notes.md << EOF
+          ## TruthDB Installer ISO ${GITHUB_REF#refs/tags/v}
+          
+          ### Changes
+          $CHANGELOG
+          
+          ### Installation
+          
+          Download the \`truthdb-installer.iso\` file and boot from it on a compatible x86_64 system with UEFI support.
+          
+          ### Components
+          
+          This ISO includes:
+          - TruthDB Installer (version ${GITHUB_REF#refs/tags/v})
+          - TruthDB Installer Kernel (version ${GITHUB_REF#refs/tags/v})
+          EOF
+          
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          cat release_notes.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      
+      - name: Rename ISO with version
+        run: |
+          mv truthdb-installer.iso truthdb-installer-v${{ steps.get_version.outputs.version }}.iso
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ steps.get_version.outputs.version }}
+          body: ${{ steps.release_notes.outputs.notes }}
+          files: |
+            truthdb-installer-v${{ steps.get_version.outputs.version }}.iso
+            truthdb-installer-v${{ steps.get_version.outputs.version }}.iso.sha256
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./truthdb-installer.iso
-          asset_name: truthdb-installer-v${{ needs.create-release.outputs.version }}.iso
-          asset_content_type: application/x-iso9660-image
-      
-      - name: Upload Release Asset - Checksum
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./truthdb-installer-v${{ needs.create-release.outputs.version }}.iso.sha256
-          asset_name: truthdb-installer-v${{ needs.create-release.outputs.version }}.iso.sha256
-          asset_content_type: text/plain

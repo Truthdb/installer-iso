@@ -102,7 +102,6 @@ jobs:
           export KERNEL_SRC="${PWD}/kernel-bin/BOOTX64.EFI"
           export INSTALLER_BIN="${PWD}/installer-bin/truthdb-installer"
           export ISO_NAME="truthdb-installer.iso"
-          export BOOT_TEST="0"
           
           # Verify files exist
           ls -lh "$KERNEL_SRC" "$INSTALLER_BIN"
