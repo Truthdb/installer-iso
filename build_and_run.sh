@@ -4,18 +4,19 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
 # ================= CONFIG =================
-KERNEL_SRC="${KERNEL_SRC:-/work/installer-iso/BOOTX64.EFI}"
+KERNEL_SRC="${KERNEL_SRC:-/work/installer-iso/BOOTX64.EFI}"  # must be a Linux kernel image (bzImage/vmlinuz)
 INSTALLER_BIN="${INSTALLER_BIN:-/work/installer/target/x86_64-unknown-linux-musl/release/truthdb-installer}"
 
 ISO_NAME="${ISO_NAME:-truthdb-installer.iso}"
 UKI_NAME="${UKI_NAME:-TruthDBInstaller.efi}"
+EFI_IMG_NAME="${EFI_IMG_NAME:-efi.img}"
 
-BUILD_INSTALLER="${BUILD_INSTALLER:-0}"  # 1 = cargo build installer, 0 = assume INSTALLER_BIN already exists
-BOOT_TEST="${BOOT_TEST:-1}"              # 1 = run QEMU boot test of ISO, 0 = just produce ISO
+BUILD_INSTALLER="${BUILD_INSTALLER:-0}"  # 1=yes, 0=no
+BOOT_TEST="${BOOT_TEST:-1}"              # 1=yes, 0=no
 
 # ================= SANITY =================
 if [[ "$(uname -m)" != "x86_64" ]]; then
-  echo "ERROR: must run in linux/amd64 container"
+  echo "ERROR: container arch must be x86_64 (use --platform=linux/amd64)"
   exit 1
 fi
 
@@ -28,13 +29,14 @@ apt-get install -y \
   busybox-static \
   python3 \
   systemd-ukify \
-  xorriso \
+  systemd-boot-efi \
   ovmf qemu-system-x86 \
   file \
-  systemd-boot systemd-boot-efi \
+  xorriso \
+  dosfstools mtools \
   musl-tools >/dev/null
 
-# ================= RUST (only needed if BUILD_INSTALLER=1) =================
+# ================= RUST (optional) =================
 if [[ "$BUILD_INSTALLER" == "1" ]]; then
   if [[ ! -f "$HOME/.cargo/env" ]]; then
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -48,7 +50,7 @@ if [[ "$BUILD_INSTALLER" == "1" ]]; then
   popd >/dev/null
 fi
 
-[[ -f "$KERNEL_SRC" ]] || { echo "ERROR: kernel not found: $KERNEL_SRC"; exit 1; }
+[[ -f "$KERNEL_SRC" ]] || { echo "ERROR: KERNEL_SRC does not exist: $KERNEL_SRC"; exit 1; }
 [[ -x "$INSTALLER_BIN" ]] || { echo "ERROR: installer binary not found: $INSTALLER_BIN"; exit 1; }
 
 # ================= WORKDIR =================
@@ -59,6 +61,7 @@ rm -rf rootfs
 mkdir -p rootfs/{bin,sbin,etc,proc,sys,dev,run,tmp}
 
 cp /bin/busybox rootfs/bin/busybox
+chmod +x rootfs/bin/busybox
 ln -sf /bin/busybox rootfs/sbin/init
 ln -sf /bin/busybox rootfs/bin/sh
 
@@ -91,21 +94,28 @@ ukify build \
   --cmdline @./cmdline.txt \
   --output "./$UKI_NAME"
 
-file "$UKI_NAME"
+file "./$UKI_NAME"
+
+# ================= EFI IMG (FAT, El Torito boot image) =================
+rm -f "./$EFI_IMG_NAME"
+dd if=/dev/zero of="./$EFI_IMG_NAME" bs=1M count=128
+mkfs.vfat -F 32 "./$EFI_IMG_NAME"
+
+mmd   -i "./$EFI_IMG_NAME" ::/EFI
+mmd   -i "./$EFI_IMG_NAME" ::/EFI/BOOT
+mcopy -i "./$EFI_IMG_NAME" "./$UKI_NAME" ::/EFI/BOOT/BOOTX64.EFI
 
 # ================= ISO =================
-rm -rf iso
-mkdir -p iso/EFI/BOOT
-cp "$UKI_NAME" iso/EFI/BOOT/BOOTX64.EFI
+rm -f "$ISO_NAME"
 
 xorriso -as mkisofs \
   -R -J \
   -o "$ISO_NAME" \
   -eltorito-alt-boot \
-  -e EFI/BOOT/BOOTX64.EFI \
+  -e "$EFI_IMG_NAME" \
   -no-emul-boot \
   -isohybrid-gpt-basdat \
-  iso
+  -graft-points "$EFI_IMG_NAME"="$EFI_IMG_NAME"
 
 echo "ISO ready: $ISO_NAME"
 
@@ -114,16 +124,15 @@ if [[ "$BOOT_TEST" == "1" ]]; then
   cp /usr/share/OVMF/OVMF_CODE_4M.fd ./OVMF_CODE.fd
   cp /usr/share/OVMF/OVMF_VARS_4M.fd ./OVMF_VARS.fd
 
-exec qemu-system-x86_64 \
-  -m 2048 \
-  -machine q35 \
-  -accel tcg \
-  -nographic \
-  -serial mon:stdio \
-  -drive if=pflash,format=raw,readonly=on,file=./OVMF_CODE.fd \
-  -drive if=pflash,format=raw,file=./OVMF_VARS.fd \
-  -drive file=truthdb-installer.iso,media=cdrom,if=ide \
-  -boot order=d,menu=off \
-  -net none
+  exec qemu-system-x86_64 \
+    -m 2048 \
+    -machine q35 \
+    -accel tcg \
+    -nographic \
+    -serial mon:stdio \
+    -drive if=pflash,format=raw,readonly=on,file=./OVMF_CODE.fd \
+    -drive if=pflash,format=raw,file=./OVMF_VARS.fd \
+    -drive file="$ISO_NAME",media=cdrom,readonly=on \
+    -boot order=d,menu=off \
+    -net none
 fi
-
