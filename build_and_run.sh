@@ -114,16 +114,16 @@ if [[ "$BOOT_TEST" == "1" ]]; then
   cp /usr/share/OVMF/OVMF_CODE_4M.fd ./OVMF_CODE.fd
   cp /usr/share/OVMF/OVMF_VARS_4M.fd ./OVMF_VARS.fd
 
-  exec qemu-system-x86_64 \
-    -m 2048 \
-    -machine q35 \
-    -accel tcg \
-    -nographic \
-    -serial mon:stdio \
-    -drive if=pflash,format=raw,readonly=on,file=./OVMF_CODE.fd \
-    -drive if=pflash,format=raw,file=./OVMF_VARS.fd \
-    -cdrom "$ISO_NAME" \
-    -boot order=d,menu=off \
-    -net none
+exec qemu-system-x86_64 \
+  -m 2048 \
+  -machine q35 \
+  -accel tcg \
+  -nographic \
+  -serial mon:stdio \
+  -drive if=pflash,format=raw,readonly=on,file=./OVMF_CODE.fd \
+  -drive if=pflash,format=raw,file=./OVMF_VARS.fd \
+  -drive file=truthdb-installer.iso,media=cdrom,if=ide \
+  -boot order=d,menu=off \
+  -net none
 fi
 
