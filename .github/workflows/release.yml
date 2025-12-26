@@ -50,6 +50,10 @@ jobs:
             echo "No matching release v${VERSION} found in installer repo"
             echo "Falling back to latest release"
             RELEASE=$(curl -s https://api.github.com/repos/Truthdb/installer/releases/latest)
+            INSTALLER_VERSION=$(echo "$RELEASE" | jq -r '.tag_name')
+            echo "INSTALLER_VERSION=${INSTALLER_VERSION}" >> $GITHUB_ENV
+          else
+            echo "INSTALLER_VERSION=v${VERSION}" >> $GITHUB_ENV
           fi
           
           # Download the installer binary
@@ -85,6 +89,10 @@ jobs:
             echo "No matching release ${VERSION} found in installer-kernel repo"
             echo "Falling back to latest release"
             RELEASE=$(curl -s https://api.github.com/repos/Truthdb/installer-kernel/releases/latest)
+            KERNEL_VERSION=$(echo "$RELEASE" | jq -r '.tag_name')
+            echo "KERNEL_VERSION=${KERNEL_VERSION}" >> $GITHUB_ENV
+          else
+            echo "KERNEL_VERSION=${VERSION}" >> $GITHUB_ENV
           fi
           
           # Download the kernel (BOOTX64.EFI)
@@ -210,8 +218,8 @@ jobs:
           ### Components
           
           This ISO includes:
-          - TruthDB Installer (version ${GITHUB_REF#refs/tags/v})
-          - TruthDB Installer Kernel (version ${GITHUB_REF#refs/tags/v})
+          - TruthDB Installer (version ${{ env.INSTALLER_VERSION }})
+          - TruthDB Installer Kernel (version ${{ env.KERNEL_VERSION }})
           EOF
           
           echo "notes<<EOF" >> $GITHUB_OUTPUT
