@@ -10,12 +10,9 @@ permissions:
   contents: write
 
 jobs:
-  create-release:
-    name: Create Release
+  build-and-release:
+    name: Build and Release ISO
     runs-on: ubuntu-latest
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-      version: ${{ steps.get_version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -62,29 +59,6 @@ jobs:
           - Installer binary from [installer v${{ steps.get_version.outputs.version }}](https://github.com/Truthdb/installer/releases/tag/v${{ steps.get_version.outputs.version }})
           - Kernel from [installer-kernel ${{ steps.get_version.outputs.version }}](https://github.com/Truthdb/installer-kernel/releases/tag/${{ steps.get_version.outputs.version }})
           EOF
-          
-          echo "notes<<EOF" >> $GITHUB_OUTPUT
-          cat release_notes.md >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-      
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ steps.get_version.outputs.version }}
-          body: ${{ steps.release_notes.outputs.notes }}
-          draft: false
-          prerelease: false
-
-  build-and-upload:
-    name: Build and Upload ISO
-    needs: create-release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
       
       - name: Install dependencies
         run: |
@@ -102,25 +76,33 @@ jobs:
       
       - name: Download installer binary for version
         run: |
-          VERSION="${{ needs.create-release.outputs.version }}"
+          VERSION="${{ steps.get_version.outputs.version }}"
           
           # Try with v prefix first
           RELEASE_DATA=$(curl -s https://api.github.com/repos/Truthdb/installer/releases/tags/v${VERSION})
+          TAG_NAME=$(echo "$RELEASE_DATA" | jq -r '.tag_name // empty')
           
           # If not found, try without v prefix
-          if echo "$RELEASE_DATA" | jq -e '.message == "Not Found"' > /dev/null; then
+          if [ -z "$TAG_NAME" ]; then
             RELEASE_DATA=$(curl -s https://api.github.com/repos/Truthdb/installer/releases/tags/${VERSION})
+            TAG_NAME=$(echo "$RELEASE_DATA" | jq -r '.tag_name // empty')
           fi
           
           # Check if we got a valid release
-          if echo "$RELEASE_DATA" | jq -e '.message == "Not Found"' > /dev/null; then
+          if [ -z "$TAG_NAME" ]; then
             echo "ERROR: No matching installer release found for version ${VERSION}"
             echo "Trying to use latest release instead..."
             RELEASE_DATA=$(curl -s https://api.github.com/repos/Truthdb/installer/releases/latest)
+            TAG_NAME=$(echo "$RELEASE_DATA" | jq -r '.tag_name // empty')
+            
+            if [ -z "$TAG_NAME" ]; then
+              echo "ERROR: No releases found in installer repository"
+              exit 1
+            fi
           fi
           
           # Extract the download URL for the tar.gz file
-          DOWNLOAD_URL=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name | endswith(".tar.gz")) | .browser_download_url')
+          DOWNLOAD_URL=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name | endswith(".tar.gz")) | .browser_download_url // empty')
           
           if [ -z "$DOWNLOAD_URL" ]; then
             echo "ERROR: No tar.gz asset found in release"
@@ -140,25 +122,33 @@ jobs:
       
       - name: Download kernel for version
         run: |
-          VERSION="${{ needs.create-release.outputs.version }}"
+          VERSION="${{ steps.get_version.outputs.version }}"
           
           # Try with v prefix first
           RELEASE_DATA=$(curl -s https://api.github.com/repos/Truthdb/installer-kernel/releases/tags/v${VERSION})
+          TAG_NAME=$(echo "$RELEASE_DATA" | jq -r '.tag_name // empty')
           
           # If not found, try without v prefix
-          if echo "$RELEASE_DATA" | jq -e '.message == "Not Found"' > /dev/null; then
+          if [ -z "$TAG_NAME" ]; then
             RELEASE_DATA=$(curl -s https://api.github.com/repos/Truthdb/installer-kernel/releases/tags/${VERSION})
+            TAG_NAME=$(echo "$RELEASE_DATA" | jq -r '.tag_name // empty')
           fi
           
           # Check if we got a valid release
-          if echo "$RELEASE_DATA" | jq -e '.message == "Not Found"' > /dev/null; then
+          if [ -z "$TAG_NAME" ]; then
             echo "ERROR: No matching kernel release found for version ${VERSION}"
             echo "Trying to use latest release instead..."
             RELEASE_DATA=$(curl -s https://api.github.com/repos/Truthdb/installer-kernel/releases/latest)
+            TAG_NAME=$(echo "$RELEASE_DATA" | jq -r '.tag_name // empty')
+            
+            if [ -z "$TAG_NAME" ]; then
+              echo "ERROR: No releases found in installer-kernel repository"
+              exit 1
+            fi
           fi
           
           # Extract the download URL for BOOTX64.EFI
-          DOWNLOAD_URL=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name == "BOOTX64.EFI") | .browser_download_url')
+          DOWNLOAD_URL=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name == "BOOTX64.EFI") | .browser_download_url // empty')
           
           if [ -z "$DOWNLOAD_URL" ]; then
             echo "ERROR: No BOOTX64.EFI asset found in release"
@@ -225,22 +215,13 @@ jobs:
           sha256sum TruthDBInstaller.efi > TruthDBInstaller.efi.sha256
           cat TruthDBInstaller.efi.sha256
       
-      - name: Upload Release Asset - ISO
-        uses: actions/upload-release-asset@v1
+      - name: Create Release and Upload Assets
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./TruthDBInstaller.efi
-          asset_name: TruthDBInstaller.efi
-          asset_content_type: application/octet-stream
-      
-      - name: Upload Release Asset - Checksum
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./TruthDBInstaller.efi.sha256
-          asset_name: TruthDBInstaller.efi.sha256
-          asset_content_type: text/plain
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Create release with notes
+          gh release create "${{ github.ref_name }}" \
+            --title "Release ${{ steps.get_version.outputs.version }}" \
+            --notes-file release_notes.md \
+            TruthDBInstaller.efi \
+            TruthDBInstaller.efi.sha256

@@ -40,8 +40,10 @@ jobs:
           # Get the latest release from installer repo
           RELEASE_DATA=$(curl -s https://api.github.com/repos/Truthdb/installer/releases/latest)
           
-          # Check if we got a valid release
-          if echo "$RELEASE_DATA" | jq -e '.message == "Not Found"' > /dev/null; then
+          # Check if we got a valid release (check for tag_name field)
+          TAG_NAME=$(echo "$RELEASE_DATA" | jq -r '.tag_name // empty')
+          
+          if [ -z "$TAG_NAME" ]; then
             echo "No releases found in installer repository. Using a placeholder."
             # Create a dummy installer for CI testing
             mkdir -p bin
@@ -50,7 +52,7 @@ jobs:
             chmod +x bin/truthdb-installer
           else
             # Extract the download URL for the tar.gz file
-            DOWNLOAD_URL=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name | endswith(".tar.gz")) | .browser_download_url')
+            DOWNLOAD_URL=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name | endswith(".tar.gz")) | .browser_download_url // empty')
             
             if [ -z "$DOWNLOAD_URL" ]; then
               echo "No tar.gz asset found in latest release. Using placeholder."
@@ -77,8 +79,21 @@ jobs:
           # Get the latest release from installer-kernel repo
           RELEASE_DATA=$(curl -s https://api.github.com/repos/Truthdb/installer-kernel/releases/latest)
           
+          # Check if we got a valid release (check for tag_name field)
+          TAG_NAME=$(echo "$RELEASE_DATA" | jq -r '.tag_name // empty')
+          
+          if [ -z "$TAG_NAME" ]; then
+            echo "ERROR: No releases found in installer-kernel repository"
+            exit 1
+          fi
+          
           # Extract the download URL for BOOTX64.EFI
-          DOWNLOAD_URL=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name == "BOOTX64.EFI") | .browser_download_url')
+          DOWNLOAD_URL=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name == "BOOTX64.EFI") | .browser_download_url // empty')
+          
+          if [ -z "$DOWNLOAD_URL" ]; then
+            echo "ERROR: No BOOTX64.EFI asset found in latest release"
+            exit 1
+          fi
           
           echo "Downloading kernel from: $DOWNLOAD_URL"
           curl -L -o vmlinuz "$DOWNLOAD_URL"
