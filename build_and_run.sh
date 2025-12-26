@@ -4,13 +4,13 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
 # ================= CONFIG =================
-KERNEL_SRC="${KERNEL_SRC:-/work/installer-kernel/vmlinuz}"
+KERNEL_SRC="${KERNEL_SRC:-/work/installer-iso/BOOTX64.EFI}"
 INSTALLER_BIN="${INSTALLER_BIN:-/work/installer/target/x86_64-unknown-linux-musl/release/truthdb-installer}"
 
 ISO_NAME="${ISO_NAME:-truthdb-installer.iso}"
 UKI_NAME="${UKI_NAME:-TruthDBInstaller.efi}"
 
-BUILD_INSTALLER="${BUILD_INSTALLER:-1}"  # 1 = cargo build installer, 0 = assume INSTALLER_BIN already exists
+BUILD_INSTALLER="${BUILD_INSTALLER:-0}"  # 1 = cargo build installer, 0 = assume INSTALLER_BIN already exists
 BOOT_TEST="${BOOT_TEST:-1}"              # 1 = run QEMU boot test of ISO, 0 = just produce ISO
 
 # ================= SANITY =================
@@ -31,6 +31,7 @@ apt-get install -y \
   xorriso \
   ovmf qemu-system-x86 \
   file \
+  systemd-boot systemd-boot-efi \
   musl-tools >/dev/null
 
 # ================= RUST (only needed if BUILD_INSTALLER=1) =================
