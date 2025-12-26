@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  DEBIAN_FRONTEND: noninteractive
+
+permissions:
+  contents: read
+
+jobs:
+  build-iso:
+    name: Build ISO
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ca-certificates curl git \
+            build-essential pkg-config \
+            cpio zstd \
+            busybox-static \
+            python3 \
+            systemd-ukify \
+            file \
+            systemd-boot systemd-boot-efi \
+            jq
+      
+      - name: Download latest installer binary
+        run: |
+          # Get the latest release from installer repo
+          RELEASE_DATA=$(curl -s https://api.github.com/repos/Truthdb/installer/releases/latest)
+          
+          # Check if we got a valid release
+          if echo "$RELEASE_DATA" | jq -e '.message == "Not Found"' > /dev/null; then
+            echo "No releases found in installer repository. Using a placeholder."
+            # Create a dummy installer for CI testing
+            mkdir -p bin
+            echo '#!/bin/sh' > bin/truthdb-installer
+            echo 'echo "Placeholder installer"' >> bin/truthdb-installer
+            chmod +x bin/truthdb-installer
+          else
+            # Extract the download URL for the tar.gz file
+            DOWNLOAD_URL=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name | endswith(".tar.gz")) | .browser_download_url')
+            
+            if [ -z "$DOWNLOAD_URL" ]; then
+              echo "No tar.gz asset found in latest release. Using placeholder."
+              mkdir -p bin
+              echo '#!/bin/sh' > bin/truthdb-installer
+              echo 'echo "Placeholder installer"' >> bin/truthdb-installer
+              chmod +x bin/truthdb-installer
+            else
+              echo "Downloading installer from: $DOWNLOAD_URL"
+              curl -L -o installer.tar.gz "$DOWNLOAD_URL"
+              tar xzf installer.tar.gz
+              mkdir -p bin
+              mv truthdb-installer bin/
+              chmod +x bin/truthdb-installer
+            fi
+          fi
+          
+          # Verify the binary exists
+          ls -lh bin/truthdb-installer
+          file bin/truthdb-installer
+      
+      - name: Download latest kernel
+        run: |
+          # Get the latest release from installer-kernel repo
+          RELEASE_DATA=$(curl -s https://api.github.com/repos/Truthdb/installer-kernel/releases/latest)
+          
+          # Extract the download URL for BOOTX64.EFI
+          DOWNLOAD_URL=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name == "BOOTX64.EFI") | .browser_download_url')
+          
+          echo "Downloading kernel from: $DOWNLOAD_URL"
+          curl -L -o vmlinuz "$DOWNLOAD_URL"
+          
+          # Verify the kernel exists
+          ls -lh vmlinuz
+          file vmlinuz
+      
+      - name: Build initramfs
+        run: |
+          # Create rootfs structure
+          rm -rf rootfs
+          mkdir -p rootfs/{bin,sbin,etc,proc,sys,dev,run,tmp}
+          
+          # Copy busybox
+          cp /bin/busybox rootfs/bin/busybox
+          chmod +x rootfs/bin/busybox
+          ln -sf /bin/busybox rootfs/sbin/init
+          ln -sf /bin/busybox rootfs/bin/sh
+          
+          # Copy installer
+          cp bin/truthdb-installer rootfs/bin/truthdb-installer
+          chmod +x rootfs/bin/truthdb-installer
+          
+          # Create inittab
+          cat > rootfs/etc/inittab <<'EOF'
+          ::sysinit:/bin/busybox mount -t proc proc /proc
+          ::sysinit:/bin/busybox mount -t sysfs sysfs /sys
+          ::sysinit:/bin/busybox mount -t devtmpfs devtmpfs /dev
+          ::respawn:/bin/truthdb-installer
+          ::restart:/bin/busybox reboot -f
+          EOF
+          
+          # Create initramfs
+          rm -f initramfs.cpio initramfs.cpio.zst
+          ( cd rootfs && find . -print0 | cpio --null -ov --format=newc ) > initramfs.cpio
+          zstd -19 -T0 initramfs.cpio -o initramfs.cpio.zst
+      
+      - name: Create cmdline
+        run: |
+          cat > cmdline.txt <<'EOF'
+          console=ttyS0 earlyprintk=serial loglevel=7 rdinit=/sbin/init
+          EOF
+      
+      - name: Build UKI
+        run: |
+          ukify build \
+            --linux ./vmlinuz \
+            --initrd ./initramfs.cpio.zst \
+            --cmdline @./cmdline.txt \
+            --output ./TruthDBInstaller.efi
+          
+          # Verify the UKI was created
+          ls -lh TruthDBInstaller.efi
+          file TruthDBInstaller.efi
+      
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TruthDBInstaller
+          path: TruthDBInstaller.efi
+          if-no-files-found: error

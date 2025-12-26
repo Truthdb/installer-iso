@@ -1,0 +1,246 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - '[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Get version from tag
+        id: get_version
+        run: |
+          # Handle both v-prefixed and non-prefixed tags
+          if [[ "$GITHUB_REF" =~ ^refs/tags/v(.+)$ ]]; then
+            echo "version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          # Get the previous tag
+          PREV_TAG=$(git describe --abbrev=0 --tags $(git rev-list --tags --skip=1 --max-count=1) 2>/dev/null || echo "")
+          
+          # Generate changelog
+          if [ -z "$PREV_TAG" ]; then
+            echo "First release"
+            CHANGELOG="Initial release of TruthDB Installer ISO"
+          else
+            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --no-merges)
+          fi
+          
+          # Create release body
+          cat > release_notes.md << EOF
+          ## TruthDB Installer ISO ${GITHUB_REF#refs/tags/}
+          
+          ### Changes
+          $CHANGELOG
+          
+          ### Installation
+          
+          Download the \`TruthDBInstaller.efi\` file and boot from it using UEFI.
+          
+          ### Components
+          
+          This release includes:
+          - Installer binary from [installer v${{ steps.get_version.outputs.version }}](https://github.com/Truthdb/installer/releases/tag/v${{ steps.get_version.outputs.version }})
+          - Kernel from [installer-kernel ${{ steps.get_version.outputs.version }}](https://github.com/Truthdb/installer-kernel/releases/tag/${{ steps.get_version.outputs.version }})
+          EOF
+          
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          cat release_notes.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ steps.get_version.outputs.version }}
+          body: ${{ steps.release_notes.outputs.notes }}
+          draft: false
+          prerelease: false
+
+  build-and-upload:
+    name: Build and Upload ISO
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ca-certificates curl git \
+            build-essential pkg-config \
+            cpio zstd \
+            busybox-static \
+            python3 \
+            systemd-ukify \
+            file \
+            systemd-boot systemd-boot-efi \
+            jq
+      
+      - name: Download installer binary for version
+        run: |
+          VERSION="${{ needs.create-release.outputs.version }}"
+          
+          # Try with v prefix first
+          RELEASE_DATA=$(curl -s https://api.github.com/repos/Truthdb/installer/releases/tags/v${VERSION})
+          
+          # If not found, try without v prefix
+          if echo "$RELEASE_DATA" | jq -e '.message == "Not Found"' > /dev/null; then
+            RELEASE_DATA=$(curl -s https://api.github.com/repos/Truthdb/installer/releases/tags/${VERSION})
+          fi
+          
+          # Check if we got a valid release
+          if echo "$RELEASE_DATA" | jq -e '.message == "Not Found"' > /dev/null; then
+            echo "ERROR: No matching installer release found for version ${VERSION}"
+            echo "Trying to use latest release instead..."
+            RELEASE_DATA=$(curl -s https://api.github.com/repos/Truthdb/installer/releases/latest)
+          fi
+          
+          # Extract the download URL for the tar.gz file
+          DOWNLOAD_URL=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name | endswith(".tar.gz")) | .browser_download_url')
+          
+          if [ -z "$DOWNLOAD_URL" ]; then
+            echo "ERROR: No tar.gz asset found in release"
+            exit 1
+          fi
+          
+          echo "Downloading installer from: $DOWNLOAD_URL"
+          curl -L -o installer.tar.gz "$DOWNLOAD_URL"
+          tar xzf installer.tar.gz
+          mkdir -p bin
+          mv truthdb-installer bin/
+          chmod +x bin/truthdb-installer
+          
+          # Verify the binary exists
+          ls -lh bin/truthdb-installer
+          file bin/truthdb-installer
+      
+      - name: Download kernel for version
+        run: |
+          VERSION="${{ needs.create-release.outputs.version }}"
+          
+          # Try with v prefix first
+          RELEASE_DATA=$(curl -s https://api.github.com/repos/Truthdb/installer-kernel/releases/tags/v${VERSION})
+          
+          # If not found, try without v prefix
+          if echo "$RELEASE_DATA" | jq -e '.message == "Not Found"' > /dev/null; then
+            RELEASE_DATA=$(curl -s https://api.github.com/repos/Truthdb/installer-kernel/releases/tags/${VERSION})
+          fi
+          
+          # Check if we got a valid release
+          if echo "$RELEASE_DATA" | jq -e '.message == "Not Found"' > /dev/null; then
+            echo "ERROR: No matching kernel release found for version ${VERSION}"
+            echo "Trying to use latest release instead..."
+            RELEASE_DATA=$(curl -s https://api.github.com/repos/Truthdb/installer-kernel/releases/latest)
+          fi
+          
+          # Extract the download URL for BOOTX64.EFI
+          DOWNLOAD_URL=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name == "BOOTX64.EFI") | .browser_download_url')
+          
+          if [ -z "$DOWNLOAD_URL" ]; then
+            echo "ERROR: No BOOTX64.EFI asset found in release"
+            exit 1
+          fi
+          
+          echo "Downloading kernel from: $DOWNLOAD_URL"
+          curl -L -o vmlinuz "$DOWNLOAD_URL"
+          
+          # Verify the kernel exists
+          ls -lh vmlinuz
+          file vmlinuz
+      
+      - name: Build initramfs
+        run: |
+          # Create rootfs structure
+          rm -rf rootfs
+          mkdir -p rootfs/{bin,sbin,etc,proc,sys,dev,run,tmp}
+          
+          # Copy busybox
+          cp /bin/busybox rootfs/bin/busybox
+          chmod +x rootfs/bin/busybox
+          ln -sf /bin/busybox rootfs/sbin/init
+          ln -sf /bin/busybox rootfs/bin/sh
+          
+          # Copy installer
+          cp bin/truthdb-installer rootfs/bin/truthdb-installer
+          chmod +x rootfs/bin/truthdb-installer
+          
+          # Create inittab
+          cat > rootfs/etc/inittab <<'EOF'
+          ::sysinit:/bin/busybox mount -t proc proc /proc
+          ::sysinit:/bin/busybox mount -t sysfs sysfs /sys
+          ::sysinit:/bin/busybox mount -t devtmpfs devtmpfs /dev
+          ::respawn:/bin/truthdb-installer
+          ::restart:/bin/busybox reboot -f
+          EOF
+          
+          # Create initramfs
+          rm -f initramfs.cpio initramfs.cpio.zst
+          ( cd rootfs && find . -print0 | cpio --null -ov --format=newc ) > initramfs.cpio
+          zstd -19 -T0 initramfs.cpio -o initramfs.cpio.zst
+      
+      - name: Create cmdline
+        run: |
+          cat > cmdline.txt <<'EOF'
+          console=ttyS0 earlyprintk=serial loglevel=7 rdinit=/sbin/init
+          EOF
+      
+      - name: Build UKI
+        run: |
+          ukify build \
+            --linux ./vmlinuz \
+            --initrd ./initramfs.cpio.zst \
+            --cmdline @./cmdline.txt \
+            --output ./TruthDBInstaller.efi
+          
+          # Verify the UKI was created
+          ls -lh TruthDBInstaller.efi
+          file TruthDBInstaller.efi
+      
+      - name: Generate checksum
+        run: |
+          sha256sum TruthDBInstaller.efi > TruthDBInstaller.efi.sha256
+          cat TruthDBInstaller.efi.sha256
+      
+      - name: Upload Release Asset - ISO
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./TruthDBInstaller.efi
+          asset_name: TruthDBInstaller.efi
+          asset_content_type: application/octet-stream
+      
+      - name: Upload Release Asset - Checksum
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./TruthDBInstaller.efi.sha256
+          asset_name: TruthDBInstaller.efi.sha256
+          asset_content_type: text/plain
