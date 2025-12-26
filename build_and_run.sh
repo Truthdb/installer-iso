@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export DEBIAN_FRONTEND=noninteractive
+
 # ---- config you must set ----
 KERNEL_SRC="${KERNEL_SRC:-/work/installer-iso/BOOTX64.EFI}"
 INSTALLER_BIN="/work/installer/target/x86_64-unknown-linux-musl/release/truthdb-installer"
