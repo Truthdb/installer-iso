@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ---- config you must set ----
-KERNEL_SRC="${KERNEL_SRC:-/work/installer-kernel/PUT_YOUR_KERNEL_OUTPUT_PATH_HERE}"
+KERNEL_SRC="${KERNEL_SRC:-/work/installer-iso/BOOTX64.EFI}"
 INSTALLER_BIN="/work/installer/target/x86_64-unknown-linux-musl/release/truthdb-installer"
 
 # ---- sanity ----
@@ -22,6 +22,7 @@ apt-get install -y \
   systemd-ukify \
   ovmf qemu-system-x86 \
   file \
+  systemd-boot systemd-boot-efi \
   musl-tools >/dev/null
 
 # ---- rustup (idempotent-ish) ----
