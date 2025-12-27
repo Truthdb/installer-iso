@@ -81,8 +81,11 @@ rm -f initramfs.cpio initramfs.cpio.zst
 zstd -19 -T0 initramfs.cpio -o initramfs.cpio.zst
 
 # ================= CMDLINE =================
+#cat > cmdline.txt <<'EOF'
+#console=ttyS0 earlyprintk=serial loglevel=7 rdinit=/sbin/init
+#EOF
 cat > cmdline.txt <<'EOF'
-console=ttyS0 earlyprintk=serial loglevel=7 rdinit=/sbin/init
+console=tty0 console=ttyS0,115200 earlycon=efi loglevel=7 rdinit=/sbin/init
 EOF
 
 # ================= UKI =================
@@ -124,12 +127,23 @@ if [[ "$BOOT_TEST" == "1" ]]; then
   cp /usr/share/OVMF/OVMF_CODE_4M.fd ./OVMF_CODE.fd
   cp /usr/share/OVMF/OVMF_VARS_4M.fd ./OVMF_VARS.fd
 
+  # exec qemu-system-x86_64 \
+  #   -m 2048 \
+  #   -machine q35 \
+  #   -accel tcg \
+  #   -nographic \
+  #   -serial mon:stdio \
+  #   -drive if=pflash,format=raw,readonly=on,file=./OVMF_CODE.fd \
+  #   -drive if=pflash,format=raw,file=./OVMF_VARS.fd \
+  #   -drive file="$ISO_NAME",media=cdrom,readonly=on \
+  #   -boot order=d,menu=off \
+  #   -net none
+
   exec qemu-system-x86_64 \
     -m 2048 \
     -machine q35 \
     -accel tcg \
-    -nographic \
-    -serial mon:stdio \
+    -serial stdio \
     -drive if=pflash,format=raw,readonly=on,file=./OVMF_CODE.fd \
     -drive if=pflash,format=raw,file=./OVMF_VARS.fd \
     -drive file="$ISO_NAME",media=cdrom,readonly=on \
