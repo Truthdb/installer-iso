@@ -72,6 +72,10 @@ cat > rootfs/etc/inittab <<'EOF'
 ::sysinit:/bin/busybox mount -t proc proc /proc
 ::sysinit:/bin/busybox mount -t sysfs sysfs /sys
 ::sysinit:/bin/busybox mount -t devtmpfs devtmpfs /dev
+#::sysinit:/bin/busybox sh -c 'echo; echo "==============================="; echo "=== TRUTHDB INITRAMFS START ==="; echo "==============================="; echo'
+#::sysinit:/bin/busybox sh -c 'echo "--- FBDEV ---"; /bin/busybox ls -l /dev/fb* 2>&1 || echo "NO /dev/fb*"'
+#::sysinit:/bin/busybox sh -c 'echo "--- DRM ---"; /bin/busybox ls -l /dev/dri/* 2>&1 || echo "NO /dev/dri/*"'
+#::sysinit:/bin/busybox sh -c 'echo "--- DMESG (graphics) ---"; /bin/busybox dmesg | /bin/busybox grep -Ei "efi|gop|efifb|simplefb|simpledrm|drm|framebuffer" || echo "NO MATCHES"'
 ::respawn:/bin/truthdb-installer
 ::restart:/bin/busybox reboot -f
 EOF
