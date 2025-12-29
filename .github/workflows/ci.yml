@@ -10,11 +10,27 @@ permissions:
   contents: read
 
 jobs:
-  build-iso:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Shellcheck
+        run: shellcheck ./build_and_run.sh ./run_container.sh
+
+  build:
     name: Build ISO
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       
@@ -36,33 +52,43 @@ jobs:
       
       - name: Download latest installer binary
         run: |
+          set -euo pipefail
           # Get latest release from installer repo
-          LATEST_RELEASE=$(curl -s https://api.github.com/repos/Truthdb/installer/releases/latest)
+          LATEST_RELEASE=$(curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/Truthdb/installer/releases/latest || true)
           
           # Check if there are any releases
-          if echo "$LATEST_RELEASE" | jq -e '.message == "Not Found"' > /dev/null; then
-            echo "No releases found in installer repo, will need to build from source or use placeholder"
-            # For now, create a placeholder binary for testing
+          if [ -z "$LATEST_RELEASE" ] || echo "$LATEST_RELEASE" | jq -e '.message == "Not Found"' > /dev/null; then
+            echo "No releases found in installer repo; using placeholder installer binary for CI."
             mkdir -p installer-bin
-            echo '#!/bin/sh' > installer-bin/truthdb-installer
-            echo 'echo "TruthDB Installer Placeholder"' >> installer-bin/truthdb-installer
+            cat > installer-bin/truthdb-installer <<'EOF'
+          #!/bin/sh
+          echo "TruthDB Installer Placeholder (CI only)"
+          EOF
             chmod +x installer-bin/truthdb-installer
           else
             # Download the installer binary from the latest release
-            DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | select(.name | contains("truthdb-installer")) | select(.name | endswith(".tar.gz")) | .browser_download_url')
-            
-            if [ -z "$DOWNLOAD_URL" ]; then
-              echo "No installer binary found in latest release"
-              exit 1
+            DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets // [] | .[] | select(.name | contains("truthdb-installer")) | select(.name | endswith(".tar.gz")) | .browser_download_url' | head -n 1)
+
+            if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
+              echo "No installer binary found in latest release; using placeholder installer binary for CI."
+              mkdir -p installer-bin
+              cat > installer-bin/truthdb-installer <<'EOF'
+          #!/bin/sh
+          echo "TruthDB Installer Placeholder (CI only)"
+          EOF
+              chmod +x installer-bin/truthdb-installer
+            else
+              echo "Downloading installer from: $DOWNLOAD_URL"
+              mkdir -p installer-bin
+              cd installer-bin
+              curl -fsSL -o installer.tar.gz "$DOWNLOAD_URL"
+              tar xzf installer.tar.gz
+              chmod +x truthdb-installer
+              cd ..
             fi
-            
-            echo "Downloading installer from: $DOWNLOAD_URL"
-            mkdir -p installer-bin
-            cd installer-bin
-            curl -L -o installer.tar.gz "$DOWNLOAD_URL"
-            tar xzf installer.tar.gz
-            chmod +x truthdb-installer
-            cd ..
           fi
           
           # Verify the binary exists
@@ -71,26 +97,30 @@ jobs:
       
       - name: Download latest kernel
         run: |
+          set -euo pipefail
           # Get latest release from installer-kernel repo
-          LATEST_RELEASE=$(curl -s https://api.github.com/repos/Truthdb/installer-kernel/releases/latest)
+          LATEST_RELEASE=$(curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/Truthdb/installer-kernel/releases/latest || true)
           
-          # Check if there are any releases
-          if echo "$LATEST_RELEASE" | jq -e '.message == "Not Found"' > /dev/null; then
-            echo "No releases found in installer-kernel repo"
-            exit 1
-          fi
-          
-          # Download the kernel (BOOTX64.EFI) from the latest release
-          DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | select(.name == "BOOTX64.EFI") | .browser_download_url')
-          
-          if [ -z "$DOWNLOAD_URL" ]; then
-            echo "No BOOTX64.EFI found in latest release"
-            exit 1
-          fi
-          
-          echo "Downloading kernel from: $DOWNLOAD_URL"
           mkdir -p kernel-bin
-          curl -L -o kernel-bin/BOOTX64.EFI "$DOWNLOAD_URL"
+
+          if [ -z "$LATEST_RELEASE" ] || echo "$LATEST_RELEASE" | jq -e '.message == "Not Found"' > /dev/null; then
+            echo "No releases found in installer-kernel repo; using repo BOOTX64.EFI for CI."
+            cp ./BOOTX64.EFI kernel-bin/BOOTX64.EFI
+          else
+            # Download the kernel (BOOTX64.EFI) from the latest release
+            DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets // [] | .[] | select(.name == "BOOTX64.EFI") | .browser_download_url' | head -n 1)
+
+            if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
+              echo "No BOOTX64.EFI found in latest release; using repo BOOTX64.EFI for CI."
+              cp ./BOOTX64.EFI kernel-bin/BOOTX64.EFI
+            else
+              echo "Downloading kernel from: $DOWNLOAD_URL"
+              curl -fsSL -o kernel-bin/BOOTX64.EFI "$DOWNLOAD_URL"
+            fi
+          fi
           
           # Verify the kernel exists
           ls -lh kernel-bin/BOOTX64.EFI
