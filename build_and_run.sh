@@ -41,7 +41,7 @@ if [[ "$BUILD_INSTALLER" == "1" ]]; then
   if [[ ! -f "$HOME/.cargo/env" ]]; then
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
   fi
-  # shellcheck disable=SC1090
+  # shellcheck disable=SC1090,SC1091
   . "$HOME/.cargo/env"
   rustup target add x86_64-unknown-linux-musl >/dev/null
 
