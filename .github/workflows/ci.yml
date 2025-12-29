@@ -10,7 +10,21 @@ permissions:
   contents: read
 
 jobs:
-  build-iso:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Shellcheck
+        run: shellcheck ./build_and_run.sh ./run_container.sh
+
+  build:
     name: Build ISO
     runs-on: ubuntu-latest
     permissions:
@@ -41,12 +55,8 @@ jobs:
           
           # Check if there are any releases
           if echo "$LATEST_RELEASE" | jq -e '.message == "Not Found"' > /dev/null; then
-            echo "No releases found in installer repo, will need to build from source or use placeholder"
-            # For now, create a placeholder binary for testing
-            mkdir -p installer-bin
-            echo '#!/bin/sh' > installer-bin/truthdb-installer
-            echo 'echo "TruthDB Installer Placeholder"' >> installer-bin/truthdb-installer
-            chmod +x installer-bin/truthdb-installer
+            echo "No releases found in installer repo"
+            exit 1
           else
             # Download the installer binary from the latest release
             DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | select(.name | contains("truthdb-installer")) | select(.name | endswith(".tar.gz")) | .browser_download_url')
