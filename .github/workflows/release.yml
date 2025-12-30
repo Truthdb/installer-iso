@@ -73,7 +73,9 @@ jobs:
   build:
     name: Build
     needs: create-release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       
@@ -95,17 +97,24 @@ jobs:
       
       - name: Download matching installer binary
         run: |
+          set -euo pipefail
           VERSION="${{ needs.create-release.outputs.version }}"
           echo "Looking for installer version v${VERSION}"
           
           # Try to get the matching release from installer repo
-          RELEASE=$(curl -s https://api.github.com/repos/Truthdb/installer/releases/tags/v${VERSION})
+          RELEASE=$(curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/Truthdb/installer/releases/tags/v${VERSION}" || true)
           
           # Check if the release exists
           if echo "$RELEASE" | jq -e '.message == "Not Found"' > /dev/null; then
             echo "No matching release v${VERSION} found in installer repo"
             echo "Falling back to latest release"
-            RELEASE=$(curl -s https://api.github.com/repos/Truthdb/installer/releases/latest)
+            RELEASE=$(curl -fsSL \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/Truthdb/installer/releases/latest)
             INSTALLER_VERSION=$(echo "$RELEASE" | jq -r '.tag_name')
             echo "INSTALLER_VERSION=${INSTALLER_VERSION}" >> $GITHUB_ENV
           else
@@ -113,7 +122,7 @@ jobs:
           fi
           
           # Download the installer binary
-          DOWNLOAD_URL=$(echo "$RELEASE" | jq -r '.assets[] | select(.name | contains("truthdb-installer")) | select(.name | endswith(".tar.gz")) | .browser_download_url')
+          DOWNLOAD_URL=$(echo "$RELEASE" | jq -r '.assets // [] | .[] | select(.name | contains("truthdb-installer")) | select(.name | endswith(".tar.gz")) | .browser_download_url' | head -n 1)
           
           if [ -z "$DOWNLOAD_URL" ]; then
             echo "No installer binary found in release"
@@ -123,7 +132,7 @@ jobs:
           echo "Downloading installer from: $DOWNLOAD_URL"
           mkdir -p installer-bin
           cd installer-bin
-          curl -L -o installer.tar.gz "$DOWNLOAD_URL"
+          curl -fsSL -o installer.tar.gz "$DOWNLOAD_URL"
           tar xzf installer.tar.gz
           chmod +x truthdb-installer
           cd ..
@@ -134,25 +143,26 @@ jobs:
       
       - name: Download matching kernel
         run: |
+          set -euo pipefail
           VERSION="${{ needs.create-release.outputs.version }}"
           echo "Looking for kernel version v${VERSION}"
           
           # Try to get the matching release from installer-kernel repo
-          RELEASE=$(curl -s https://api.github.com/repos/Truthdb/installer-kernel/releases/tags/v${VERSION})
+          RELEASE=$(curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/Truthdb/installer-kernel/releases/tags/v${VERSION}" || true)
           
           # Check if the release exists
           if echo "$RELEASE" | jq -e '.message == "Not Found"' > /dev/null; then
-            echo "No matching release ${VERSION} found in installer-kernel repo"
-            echo "Falling back to latest release"
-            RELEASE=$(curl -s https://api.github.com/repos/Truthdb/installer-kernel/releases/latest)
-            KERNEL_VERSION=$(echo "$RELEASE" | jq -r '.tag_name')
-            echo "KERNEL_VERSION=${KERNEL_VERSION}" >> $GITHUB_ENV
-          else
-            echo "KERNEL_VERSION=v${VERSION}" >> $GITHUB_ENV
+            echo "No matching release v${VERSION} found in installer-kernel repo"
+            exit 1
           fi
+
+          echo "KERNEL_VERSION=v${VERSION}" >> $GITHUB_ENV
           
           # Download the kernel (BOOTX64.EFI)
-          DOWNLOAD_URL=$(echo "$RELEASE" | jq -r '.assets[] | select(.name == "BOOTX64.EFI") | .browser_download_url')
+          DOWNLOAD_URL=$(echo "$RELEASE" | jq -r '.assets // [] | .[] | select(.name == "BOOTX64.EFI") | .browser_download_url' | head -n 1)
           
           if [ -z "$DOWNLOAD_URL" ]; then
             echo "No BOOTX64.EFI found in release"
@@ -161,7 +171,7 @@ jobs:
           
           echo "Downloading kernel from: $DOWNLOAD_URL"
           mkdir -p kernel-bin
-          curl -L -o kernel-bin/BOOTX64.EFI "$DOWNLOAD_URL"
+          curl -fsSL -o kernel-bin/BOOTX64.EFI "$DOWNLOAD_URL"
           
           # Verify the kernel exists
           ls -lh kernel-bin/BOOTX64.EFI

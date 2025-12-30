@@ -4,8 +4,14 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
 # ================= CONFIG =================
-KERNEL_SRC="${KERNEL_SRC:-/work/installer-iso/BOOTX64.EFI}"  # must be a Linux kernel image (bzImage/vmlinuz)
+KERNEL_SRC="${KERNEL_SRC:-}"  # must be a Linux kernel image (bzImage/vmlinuz)
 INSTALLER_BIN="${INSTALLER_BIN:-/work/installer/target/x86_64-unknown-linux-musl/release/truthdb-installer}"
+
+# If KERNEL_SRC is not provided, fetch BOOTX64.EFI from Truthdb/installer-kernel releases.
+# - If KERNEL_TAG is set (e.g. v1.2.3), fetch that exact release.
+# - Otherwise, fetch the latest release.
+KERNEL_TAG="${KERNEL_TAG:-}"
+KERNEL_REPO="${KERNEL_REPO:-Truthdb/installer-kernel}"
 
 ISO_NAME="${ISO_NAME:-truthdb-installer.iso}"
 UKI_NAME="${UKI_NAME:-TruthDBInstaller.efi}"
@@ -34,6 +40,7 @@ apt-get install -y \
   file \
   xorriso \
   dosfstools mtools \
+  jq \
   musl-tools >/dev/null
 
 # ================= RUST (optional) =================
@@ -48,6 +55,23 @@ if [[ "$BUILD_INSTALLER" == "1" ]]; then
   pushd /work/installer >/dev/null
   cargo build --release --target x86_64-unknown-linux-musl
   popd >/dev/null
+fi
+
+if [[ -z "$KERNEL_SRC" ]]; then
+  mkdir -p /work/installer-iso/kernel-bin
+  if [[ -n "$KERNEL_TAG" ]]; then
+    echo "KERNEL_SRC not set; downloading kernel from $KERNEL_REPO tag $KERNEL_TAG"
+    release=$(curl -fsSL "https://api.github.com/repos/${KERNEL_REPO}/releases/tags/${KERNEL_TAG}")
+  else
+    echo "KERNEL_SRC not set; downloading kernel from latest release of $KERNEL_REPO"
+    release=$(curl -fsSL "https://api.github.com/repos/${KERNEL_REPO}/releases/latest")
+  fi
+
+  url=$(echo "$release" | jq -r '.assets // [] | .[] | select(.name == "BOOTX64.EFI") | .browser_download_url' | head -n 1)
+  [[ -n "$url" && "$url" != "null" ]] || { echo "ERROR: could not find BOOTX64.EFI asset in release"; exit 1; }
+
+  curl -fsSL -o /work/installer-iso/kernel-bin/BOOTX64.EFI "$url"
+  KERNEL_SRC=/work/installer-iso/kernel-bin/BOOTX64.EFI
 fi
 
 [[ -f "$KERNEL_SRC" ]] || { echo "ERROR: KERNEL_SRC does not exist: $KERNEL_SRC"; exit 1; }

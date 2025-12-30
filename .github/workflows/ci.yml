@@ -26,7 +26,7 @@ jobs:
 
   build:
     name: Build ISO
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     env:
@@ -102,25 +102,25 @@ jobs:
           LATEST_RELEASE=$(curl -fsSL \
             -H "Authorization: Bearer ${GITHUB_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/Truthdb/installer-kernel/releases/latest || true)
+            https://api.github.com/repos/Truthdb/installer-kernel/releases/latest)
           
           mkdir -p kernel-bin
 
-          if [ -z "$LATEST_RELEASE" ] || echo "$LATEST_RELEASE" | jq -e '.message == "Not Found"' > /dev/null; then
-            echo "No releases found in installer-kernel repo; using repo BOOTX64.EFI for CI."
-            cp ./BOOTX64.EFI kernel-bin/BOOTX64.EFI
-          else
-            # Download the kernel (BOOTX64.EFI) from the latest release
-            DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets // [] | .[] | select(.name == "BOOTX64.EFI") | .browser_download_url' | head -n 1)
-
-            if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
-              echo "No BOOTX64.EFI found in latest release; using repo BOOTX64.EFI for CI."
-              cp ./BOOTX64.EFI kernel-bin/BOOTX64.EFI
-            else
-              echo "Downloading kernel from: $DOWNLOAD_URL"
-              curl -fsSL -o kernel-bin/BOOTX64.EFI "$DOWNLOAD_URL"
-            fi
+          if echo "$LATEST_RELEASE" | jq -e '.message == "Not Found"' > /dev/null; then
+            echo "No releases found in installer-kernel repo"
+            exit 1
           fi
+
+          # Download the kernel (BOOTX64.EFI) from the latest release
+          DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets // [] | .[] | select(.name == "BOOTX64.EFI") | .browser_download_url' | head -n 1)
+
+          if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
+            echo "No BOOTX64.EFI found in latest installer-kernel release"
+            exit 1
+          fi
+
+          echo "Downloading kernel from: $DOWNLOAD_URL"
+          curl -fsSL -o kernel-bin/BOOTX64.EFI "$DOWNLOAD_URL"
           
           # Verify the kernel exists
           ls -lh kernel-bin/BOOTX64.EFI
