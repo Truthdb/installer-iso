@@ -1,2 +1,2 @@
 # installer-iso
-Produces the ISO file to install the product 
+Produces the ISO file to install the truthdb product. 
