@@ -12,7 +12,7 @@ permissions:
 jobs:
   lint:
     name: Lint
-    uses: Truthdb/.github/.github/workflows/standard-ci.yml@issue-17-workflows
+    uses: Truthdb/.github/.github/workflows/standard-ci.yml@workflows-v1
     with:
       install_packages: shellcheck
       script: |
@@ -20,7 +20,7 @@ jobs:
 
   build:
     name: Build ISO
-    uses: Truthdb/.github/.github/workflows/standard-ci.yml@issue-17-workflows
+    uses: Truthdb/.github/.github/workflows/standard-ci.yml@workflows-v1
     with:
       runs_on: ubuntu-24.04
       install_packages: |
