@@ -9,293 +9,122 @@ permissions:
   contents: write
 
 jobs:
-  create-release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-      version: ${{ steps.get_version.outputs.version }}
-      tag: ${{ steps.get_tag.outputs.tag }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+  release:
+    uses: Truthdb/.github/.github/workflows/standard-release.yml@issue-17-workflows
+    with:
+      project_name: installer-iso
+      runs_on: ubuntu-24.04
+      install_packages: |
+        ca-certificates curl git
+        build-essential pkg-config
+        cpio zstd
+        busybox-static
+        python3
+        systemd-ukify
+        systemd-boot-efi
+        file
+        xorriso
+        dosfstools mtools
+        jq
+      assets_list: |
+        - truthdb-installer-v$VERSION.iso
+        - truthdb-installer-v$VERSION.iso.sha256
+      build_script: |
+        set -euo pipefail
 
-      - name: Get tag
-        id: get_tag
-        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        echo "Looking for installer version v${VERSION}"
+        release=$(curl -fsSL \
+          -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+          -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/repos/Truthdb/installer/releases/tags/v${VERSION}" || true)
 
-      - name: Get version from tag
-        id: get_version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Generate release notes
-        id: release_notes
-        shell: bash
-        run: |
-          set -euo pipefail
-          PREV_TAG=$(git describe --abbrev=0 --tags $(git rev-list --tags --skip=1 --max-count=1) 2>/dev/null || echo "")
-
-          if [ -z "$PREV_TAG" ]; then
-            CHANGELOG="Initial release"
-          else
-            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --no-merges)
-          fi
-
-          cat > release_notes.md << EOF
-          ## installer-iso ${GITHUB_REF#refs/tags/v}
-
-          ### Changes
-          $CHANGELOG
-
-          ### Assets
-
-          - truthdb-installer-v${GITHUB_REF#refs/tags/v}.iso
-          - truthdb-installer-v${GITHUB_REF#refs/tags/v}.iso.sha256
-          EOF
-
-          echo "notes<<EOF" >> $GITHUB_OUTPUT
-          cat release_notes.md >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ steps.get_tag.outputs.tag }}
-          release_name: Release ${{ steps.get_version.outputs.version }}
-          body: ${{ steps.release_notes.outputs.notes }}
-          draft: false
-          prerelease: false
-
-  build:
-    name: Build
-    needs: create-release
-    runs-on: ubuntu-24.04
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            ca-certificates curl git \
-            build-essential pkg-config \
-            cpio zstd \
-            busybox-static \
-            python3 \
-            systemd-ukify \
-            systemd-boot-efi \
-            file \
-            xorriso \
-            dosfstools mtools \
-            jq
-      
-      - name: Download matching installer binary
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.create-release.outputs.version }}"
-          echo "Looking for installer version v${VERSION}"
-          
-          # Try to get the matching release from installer repo
-          RELEASE=$(curl -fsSL \
+        if echo "$release" | jq -e '.message == "Not Found"' > /dev/null; then
+          echo "No matching release v${VERSION} found in installer repo; falling back to latest release"
+          release=$(curl -fsSL \
             -H "Authorization: Bearer ${GITHUB_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/Truthdb/installer/releases/tags/v${VERSION}" || true)
-          
-          # Check if the release exists
-          if echo "$RELEASE" | jq -e '.message == "Not Found"' > /dev/null; then
-            echo "No matching release v${VERSION} found in installer repo"
-            echo "Falling back to latest release"
-            RELEASE=$(curl -fsSL \
-              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/Truthdb/installer/releases/latest)
-            INSTALLER_VERSION=$(echo "$RELEASE" | jq -r '.tag_name')
-            echo "INSTALLER_VERSION=${INSTALLER_VERSION}" >> $GITHUB_ENV
-          else
-            echo "INSTALLER_VERSION=v${VERSION}" >> $GITHUB_ENV
-          fi
-          
-          # Download the installer binary
-          DOWNLOAD_URL=$(echo "$RELEASE" | jq -r '.assets // [] | .[] | select(.name | contains("truthdb-installer")) | select(.name | endswith(".tar.gz")) | .browser_download_url' | head -n 1)
-          
-          if [ -z "$DOWNLOAD_URL" ]; then
-            echo "No installer binary found in release"
-            exit 1
-          fi
-          
-          echo "Downloading installer from: $DOWNLOAD_URL"
-          mkdir -p installer-bin
-          cd installer-bin
-          curl -fsSL -o installer.tar.gz "$DOWNLOAD_URL"
-          tar xzf installer.tar.gz
-          chmod +x truthdb-installer
-          cd ..
-          
-          # Verify the binary exists
-          ls -lh installer-bin/truthdb-installer
-          file installer-bin/truthdb-installer
-      
-      - name: Download matching kernel
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.create-release.outputs.version }}"
-          echo "Looking for kernel version v${VERSION}"
-          
-          # Try to get the matching release from installer-kernel repo
-          RELEASE=$(curl -fsSL \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/Truthdb/installer-kernel/releases/tags/v${VERSION}" || true)
-          
-          # Check if the release exists
-          if echo "$RELEASE" | jq -e '.message == "Not Found"' > /dev/null; then
-            echo "No matching release v${VERSION} found in installer-kernel repo"
-            exit 1
-          fi
+            https://api.github.com/repos/Truthdb/installer/releases/latest)
+        fi
 
-          echo "KERNEL_VERSION=v${VERSION}" >> $GITHUB_ENV
-          
-          # Download the kernel (BOOTX64.EFI)
-          DOWNLOAD_URL=$(echo "$RELEASE" | jq -r '.assets // [] | .[] | select(.name == "BOOTX64.EFI") | .browser_download_url' | head -n 1)
-          
-          if [ -z "$DOWNLOAD_URL" ]; then
-            echo "No BOOTX64.EFI found in release"
-            exit 1
-          fi
-          
-          echo "Downloading kernel from: $DOWNLOAD_URL"
-          mkdir -p kernel-bin
-          curl -fsSL -o kernel-bin/BOOTX64.EFI "$DOWNLOAD_URL"
-          
-          # Verify the kernel exists
-          ls -lh kernel-bin/BOOTX64.EFI
-          file kernel-bin/BOOTX64.EFI
-      
-      - name: Build ISO
-        run: |
-          # Set environment variables for the build
-          export KERNEL_SRC="${PWD}/kernel-bin/BOOTX64.EFI"
-          export INSTALLER_BIN="${PWD}/installer-bin/truthdb-installer"
-          export ISO_NAME="truthdb-installer.iso"
-          
-          # Verify files exist
-          ls -lh "$KERNEL_SRC" "$INSTALLER_BIN"
-          
-          # Build the initramfs
-          rm -rf rootfs
-          mkdir -p rootfs/{bin,sbin,etc,proc,sys,dev,run,tmp}
-          
-          cp /bin/busybox rootfs/bin/busybox
-          chmod +x rootfs/bin/busybox
-          ln -sf /bin/busybox rootfs/sbin/init
-          ln -sf /bin/busybox rootfs/bin/sh
-          
-          cp "$INSTALLER_BIN" rootfs/bin/truthdb-installer
-          chmod +x rootfs/bin/truthdb-installer
-          
-          cat > rootfs/etc/inittab <<'EOF'
-          ::sysinit:/bin/busybox mount -t proc proc /proc
-          ::sysinit:/bin/busybox mount -t sysfs sysfs /sys
-          ::sysinit:/bin/busybox mount -t devtmpfs devtmpfs /dev
-          ::respawn:/bin/truthdb-installer
-          ::restart:/bin/busybox reboot -f
-          EOF
-          
-          rm -f initramfs.cpio initramfs.cpio.zst
-          ( cd rootfs && find . -print0 | cpio --null -ov --format=newc ) > initramfs.cpio
-          zstd -19 -T0 initramfs.cpio -o initramfs.cpio.zst
-          
-          # Create cmdline
-          cat > cmdline.txt <<'EOF'
-          console=ttyS0 earlyprintk=serial loglevel=7 rdinit=/sbin/init
-          EOF
-          
-          # Build UKI
-          cp "$KERNEL_SRC" ./vmlinuz
-          
-          ukify build \
-            --linux ./vmlinuz \
-            --initrd ./initramfs.cpio.zst \
-            --cmdline @./cmdline.txt \
-            --output ./TruthDBInstaller.efi
-          
-          file ./TruthDBInstaller.efi
-          
-          # Create EFI image
-          rm -f efi.img
-          dd if=/dev/zero of=efi.img bs=1M count=128
-          mkfs.vfat -F 32 efi.img
-          
-          mmd   -i efi.img ::/EFI
-          mmd   -i efi.img ::/EFI/BOOT
-          mcopy -i efi.img ./TruthDBInstaller.efi ::/EFI/BOOT/BOOTX64.EFI
-          
-          # Create ISO
-          rm -f "$ISO_NAME"
-          
-          xorriso -as mkisofs \
-            -R -J \
-            -o "$ISO_NAME" \
-            -eltorito-alt-boot \
-            -e efi.img \
-            -no-emul-boot \
-            -isohybrid-gpt-basdat \
-            -graft-points efi.img=efi.img
-          
-          echo "ISO ready: $ISO_NAME"
-          ls -lh "$ISO_NAME"
-      
-      - name: Generate checksum
-        run: |
-          sha256sum truthdb-installer.iso > truthdb-installer-v${{ needs.create-release.outputs.version }}.iso.sha256
-          cat truthdb-installer-v${{ needs.create-release.outputs.version }}.iso.sha256
-      
-      - name: Rename ISO with version
-        run: |
-          mkdir -p dist
-          mv truthdb-installer.iso "dist/truthdb-installer-v${{ needs.create-release.outputs.version }}.iso"
-          mv truthdb-installer-v${{ needs.create-release.outputs.version }}.iso.sha256 "dist/truthdb-installer-v${{ needs.create-release.outputs.version }}.iso.sha256"
+        download_url=$(echo "$release" | jq -r '.assets // [] | .[] | select(.name | contains("truthdb-installer")) | select(.name | endswith(".tar.gz")) | .browser_download_url' | head -n 1)
+        [[ -n "$download_url" && "$download_url" != "null" ]] || { echo "No installer binary found in release"; exit 1; }
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-assets
-          path: dist/*
-          if-no-files-found: error
+        mkdir -p installer-bin
+        (cd installer-bin && curl -fsSL -o installer.tar.gz "$download_url" && tar xzf installer.tar.gz && chmod +x truthdb-installer)
 
-  upload:
-    name: Upload
-    needs: [create-release, build]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: release-assets
-          path: dist
+        echo "Looking for kernel version v${VERSION}"
+        kernel_release=$(curl -fsSL \
+          -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+          -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/repos/Truthdb/installer-kernel/releases/tags/v${VERSION}")
 
-      - name: Upload Release Asset - ISO
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./dist/truthdb-installer-v${{ needs.create-release.outputs.version }}.iso
-          asset_name: truthdb-installer-v${{ needs.create-release.outputs.version }}.iso
-          asset_content_type: application/octet-stream
+        kernel_url=$(echo "$kernel_release" | jq -r '.assets // [] | .[] | select(.name == "BOOTX64.EFI") | .browser_download_url' | head -n 1)
+        [[ -n "$kernel_url" && "$kernel_url" != "null" ]] || { echo "No BOOTX64.EFI found in kernel release"; exit 1; }
 
-      - name: Upload Release Asset - SHA256
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./dist/truthdb-installer-v${{ needs.create-release.outputs.version }}.iso.sha256
-          asset_name: truthdb-installer-v${{ needs.create-release.outputs.version }}.iso.sha256
-          asset_content_type: text/plain
+        mkdir -p kernel-bin
+        curl -fsSL -o kernel-bin/BOOTX64.EFI "$kernel_url"
+
+        export KERNEL_SRC="${PWD}/kernel-bin/BOOTX64.EFI"
+        export INSTALLER_BIN="${PWD}/installer-bin/truthdb-installer"
+        export ISO_NAME="truthdb-installer.iso"
+
+        ls -lh "$KERNEL_SRC" "$INSTALLER_BIN"
+
+        rm -rf rootfs
+        mkdir -p rootfs/{bin,sbin,etc,proc,sys,dev,run,tmp}
+
+        cp /bin/busybox rootfs/bin/busybox
+        chmod +x rootfs/bin/busybox
+        ln -sf /bin/busybox rootfs/sbin/init
+        ln -sf /bin/busybox rootfs/bin/sh
+
+        cp "$INSTALLER_BIN" rootfs/bin/truthdb-installer
+        chmod +x rootfs/bin/truthdb-installer
+
+        cat > rootfs/etc/inittab <<'EOF'
+        ::sysinit:/bin/busybox mount -t proc proc /proc
+        ::sysinit:/bin/busybox mount -t sysfs sysfs /sys
+        ::sysinit:/bin/busybox mount -t devtmpfs devtmpfs /dev
+        ::respawn:/bin/truthdb-installer
+        ::restart:/bin/busybox reboot -f
+        EOF
+
+        rm -f initramfs.cpio initramfs.cpio.zst
+        ( cd rootfs && find . -print0 | cpio --null -ov --format=newc ) > initramfs.cpio
+        zstd -19 -T0 initramfs.cpio -o initramfs.cpio.zst
+
+        cat > cmdline.txt <<'EOF'
+        console=ttyS0 earlyprintk=serial loglevel=7 rdinit=/sbin/init
+        EOF
+
+        cp "$KERNEL_SRC" ./vmlinuz
+
+        ukify build \
+          --linux ./vmlinuz \
+          --initrd ./initramfs.cpio.zst \
+          --cmdline @./cmdline.txt \
+          --output ./TruthDBInstaller.efi
+
+        rm -f efi.img
+        dd if=/dev/zero of=efi.img bs=1M count=128
+        mkfs.vfat -F 32 efi.img
+
+        mmd   -i efi.img ::/EFI
+        mmd   -i efi.img ::/EFI/BOOT
+        mcopy -i efi.img ./TruthDBInstaller.efi ::/EFI/BOOT/BOOTX64.EFI
+
+        rm -f "$ISO_NAME"
+        xorriso -as mkisofs \
+          -R -J \
+          -o "$ISO_NAME" \
+          -eltorito-alt-boot \
+          -e efi.img \
+          -no-emul-boot \
+          -isohybrid-gpt-basdat \
+          -graft-points efi.img=efi.img
+
+        sha256sum "$ISO_NAME" > "truthdb-installer-v${VERSION}.iso.sha256"
+
+        mkdir -p dist
+        mv "$ISO_NAME" "dist/truthdb-installer-v${VERSION}.iso"
+        mv "truthdb-installer-v${VERSION}.iso.sha256" "dist/truthdb-installer-v${VERSION}.iso.sha256"
