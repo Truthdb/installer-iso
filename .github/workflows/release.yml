@@ -109,17 +109,12 @@ jobs:
           
           # Check if the release exists
           if echo "$RELEASE" | jq -e '.message == "Not Found"' > /dev/null; then
-            echo "No matching release v${VERSION} found in installer repo"
-            echo "Falling back to latest release"
-            RELEASE=$(curl -fsSL \
-              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/Truthdb/installer/releases/latest)
-            INSTALLER_VERSION=$(echo "$RELEASE" | jq -r '.tag_name')
-            echo "INSTALLER_VERSION=${INSTALLER_VERSION}" >> $GITHUB_ENV
-          else
-            echo "INSTALLER_VERSION=v${VERSION}" >> $GITHUB_ENV
+            echo "ERROR: No matching release v${VERSION} found in installer repo"
+            echo "Refusing to build an ISO with mixed versions."
+            exit 1
           fi
+
+          echo "INSTALLER_VERSION=v${VERSION}" >> $GITHUB_ENV
           
           # Download the installer binary
           DOWNLOAD_URL=$(echo "$RELEASE" | jq -r '.assets // [] | .[] | select(.name | contains("truthdb-installer")) | select(.name | endswith(".tar.gz")) | .browser_download_url' | head -n 1)
