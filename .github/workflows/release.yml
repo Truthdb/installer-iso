@@ -97,9 +97,30 @@ jobs:
             dosfstools mtools \
             jq
 
+      - name: Free disk space (runner)
+        run: |
+          set -euo pipefail
+          echo "==> Disk usage (before cleanup)"
+          df -h
+
+          # GitHub-hosted runners ship large preinstalls we don't need.
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/ghc || true
+
+          # Reduce apt footprint.
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+
+          echo "==> Disk usage (after cleanup)"
+          df -h
+
       - name: Build Debian rootfs payload (bookworm, amd64)
         run: |
           set -euo pipefail
+
+          echo "==> Disk usage (before debootstrap)"
+          df -h
 
           PAYLOAD_NAME="debian-minbase-amd64-bookworm.tar.zst"
           ROOTFS_DIR="${PWD}/debian-rootfs"
@@ -116,8 +137,25 @@ jobs:
             "$ROOTFS_DIR" \
             http://deb.debian.org/debian
 
+          # Shrink the payload: remove apt lists/caches and documentation.
+          sudo rm -rf "$ROOTFS_DIR/var/lib/apt/lists"/* || true
+          sudo rm -rf "$ROOTFS_DIR/var/cache/apt/archives"/*.deb || true
+          sudo rm -rf "$ROOTFS_DIR/usr/share/doc" || true
+          sudo rm -rf "$ROOTFS_DIR/usr/share/man" || true
+          sudo rm -rf "$ROOTFS_DIR/usr/share/info" || true
+          sudo rm -rf "$ROOTFS_DIR/usr/share/locale" || true
+
+          echo "==> Disk usage (after debootstrap + cleanup)"
+          df -h
+
           sudo tar --numeric-owner -C "$ROOTFS_DIR" -cpf - . \
             | zstd -19 -T0 -o "$PAYLOAD_NAME"
+
+          # Free workspace disk for subsequent ISO build steps.
+          sudo rm -rf "$ROOTFS_DIR"
+
+          echo "==> Disk usage (after packing payload)"
+          df -h
 
           ls -lh "$PAYLOAD_NAME"
           echo "ROOTFS_PAYLOAD=${PWD}/${PAYLOAD_NAME}" >> "$GITHUB_ENV"
@@ -244,6 +282,10 @@ jobs:
           mkdir -p rootfs/payload
           cp "$ROOTFS_PAYLOAD" rootfs/payload/debian-minbase-amd64-bookworm.tar.zst
 
+          echo "==> Sizes before initramfs pack"
+          ls -lh "$ROOTFS_PAYLOAD" || true
+          du -sh rootfs || true
+
           # Required external tools for destructive install steps.
           # These must exist in initramfs because the installer execs them directly (no shell).
           copy_bin_with_libs /usr/sbin/wipefs
@@ -258,9 +300,17 @@ jobs:
           ::restart:/bin/busybox reboot -f
           EOF
           
-          rm -f initramfs.cpio initramfs.cpio.zst
-          ( cd rootfs && find . -print0 | cpio --null -ov --format=newc ) > initramfs.cpio
-          zstd -19 -T0 initramfs.cpio -o initramfs.cpio.zst
+          # Build initramfs without storing a giant intermediate initramfs.cpio on disk.
+          rm -f initramfs.cpio.zst
+          ( cd rootfs && find . -print0 | cpio --null -ov --format=newc ) \
+            | zstd -19 -T0 -o initramfs.cpio.zst
+
+          # Free workspace disk ASAP; the payload is now inside initramfs.
+          rm -rf rootfs
+          rm -f "$ROOTFS_PAYLOAD" || true
+
+          echo "==> Sizes after initramfs pack"
+          ls -lh initramfs.cpio.zst
           
           # Create cmdline
           cat > cmdline.txt <<'EOF'
