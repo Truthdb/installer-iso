@@ -88,6 +88,7 @@ jobs:
             cpio zstd \
             busybox-static \
             util-linux \
+            debootstrap debian-archive-keyring \
             python3 \
             systemd-ukify \
             systemd-boot-efi \
@@ -95,6 +96,31 @@ jobs:
             xorriso \
             dosfstools mtools \
             jq
+
+      - name: Build Debian rootfs payload (bookworm, amd64)
+        run: |
+          set -euo pipefail
+
+          PAYLOAD_NAME="debian-minbase-amd64-bookworm.tar.zst"
+          ROOTFS_DIR="${PWD}/debian-rootfs"
+
+          sudo rm -rf "$ROOTFS_DIR" "$PAYLOAD_NAME"
+
+          # Minimal bootable Debian userspace (kernel/initramfs installed into /boot by package scripts).
+          # Keep this list intentionally short; the installer will do host-specific config later.
+          sudo debootstrap \
+            --arch=amd64 \
+            --variant=minbase \
+            --include=systemd-sysv,linux-image-amd64,initramfs-tools,ca-certificates \
+            bookworm \
+            "$ROOTFS_DIR" \
+            http://deb.debian.org/debian
+
+          sudo tar --numeric-owner -C "$ROOTFS_DIR" -cpf - . \
+            | zstd -19 -T0 -o "$PAYLOAD_NAME"
+
+          ls -lh "$PAYLOAD_NAME"
+          echo "ROOTFS_PAYLOAD=${PWD}/${PAYLOAD_NAME}" >> "$GITHUB_ENV"
       
       - name: Download matching installer binary
         run: |
@@ -213,6 +239,10 @@ jobs:
           
           cp "$INSTALLER_BIN" rootfs/bin/truthdb-installer
           chmod +x rootfs/bin/truthdb-installer
+
+          # Offline Debian payload embedded in initramfs.
+          mkdir -p rootfs/payload
+          cp "$ROOTFS_PAYLOAD" rootfs/payload/debian-minbase-amd64-bookworm.tar.zst
 
           # Required external tools for destructive install steps.
           # These must exist in initramfs because the installer execs them directly (no shell).
