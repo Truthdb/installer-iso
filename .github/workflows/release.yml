@@ -87,6 +87,7 @@ jobs:
             build-essential pkg-config \
             cpio zstd \
             busybox-static \
+            util-linux \
             python3 \
             systemd-ukify \
             systemd-boot-efi \
@@ -185,6 +186,25 @@ jobs:
           # Build the initramfs
           rm -rf rootfs
           mkdir -p rootfs/{bin,sbin,etc,proc,sys,dev,run,tmp}
+
+          # Copy a dynamically linked binary and all of its shared library deps into rootfs.
+          copy_bin_with_libs() {
+            local src="$1"
+            if [[ ! -x "$src" ]]; then
+              echo "ERROR: required tool not found or not executable: $src" >&2
+              exit 1
+            fi
+
+            mkdir -p "rootfs$(dirname "$src")"
+            cp -L "$src" "rootfs$src"
+
+            ldd "$src" \
+              | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^\//) print $i }' \
+              | while read -r dep; do
+                  mkdir -p "rootfs$(dirname "$dep")"
+                  cp -L "$dep" "rootfs$dep"
+                done
+          }
           
           cp /bin/busybox rootfs/bin/busybox
           chmod +x rootfs/bin/busybox
@@ -193,6 +213,12 @@ jobs:
           
           cp "$INSTALLER_BIN" rootfs/bin/truthdb-installer
           chmod +x rootfs/bin/truthdb-installer
+
+          # Required external tools for destructive install steps.
+          # These must exist in initramfs because the installer execs them directly (no shell).
+          copy_bin_with_libs /usr/sbin/wipefs
+          copy_bin_with_libs /usr/sbin/sfdisk
+          copy_bin_with_libs /usr/sbin/partprobe
           
           cat > rootfs/etc/inittab <<'EOF'
           ::sysinit:/bin/busybox mount -t proc proc /proc
