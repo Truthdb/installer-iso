@@ -327,10 +327,26 @@ jobs:
             --output ./TruthDBInstaller.efi
           
           file ./TruthDBInstaller.efi
+
+          # We no longer need these large intermediates after the UKI is built.
+          rm -f initramfs.cpio.zst
+          rm -f vmlinuz cmdline.txt
+          rm -rf installer-bin kernel-bin || true
+
+          echo "==> Disk usage before creating EFI image"
+          df -h
           
           # Create EFI image
           rm -f efi.img
-          dd if=/dev/zero of=efi.img bs=1M count=128
+
+          # Size the FAT image based on the UKI size (avoid wasting space on small runners).
+          uki_bytes=$(stat -c%s ./TruthDBInstaller.efi)
+          uki_mib=$(( (uki_bytes + 1024*1024 - 1) / (1024*1024) ))
+          efi_mib=$(( uki_mib + 32 ))
+          if (( efi_mib < 32 )); then efi_mib=32; fi
+          echo "Creating efi.img: ${efi_mib}MiB (UKI ~${uki_mib}MiB)"
+
+          dd if=/dev/zero of=efi.img bs=1M count="$efi_mib"
           mkfs.vfat -F 32 efi.img
           
           mmd   -i efi.img ::/EFI
