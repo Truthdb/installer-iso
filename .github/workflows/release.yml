@@ -134,7 +134,7 @@ jobs:
           sudo debootstrap \
             --arch=amd64 \
             --variant=minbase \
-            --include=systemd-sysv,linux-image-amd64,initramfs-tools,ca-certificates,sudo,passwd,iproute2 \
+            --include=systemd-sysv,linux-image-amd64,initramfs-tools,ca-certificates,sudo,passwd,iproute2,dbus \
             bookworm \
             "$ROOTFS_DIR" \
             http://deb.debian.org/debian
