@@ -134,10 +134,13 @@ jobs:
           sudo debootstrap \
             --arch=amd64 \
             --variant=minbase \
-            --include=systemd-sysv,linux-image-amd64,initramfs-tools,ca-certificates,sudo,passwd \
+            --include=systemd-sysv,linux-image-amd64,initramfs-tools,ca-certificates,sudo,passwd,iproute2 \
             bookworm \
             "$ROOTFS_DIR" \
             http://deb.debian.org/debian
+
+          # Sanity checks: verify key tools exist in the payload.
+          test -x "$ROOTFS_DIR/usr/sbin/ip" || test -x "$ROOTFS_DIR/bin/ip" || test -x "$ROOTFS_DIR/sbin/ip"
 
           # Shrink the payload: remove apt lists/caches and documentation.
           sudo rm -rf "$ROOTFS_DIR/var/lib/apt/lists"/* || true
