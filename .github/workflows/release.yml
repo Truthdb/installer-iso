@@ -304,14 +304,17 @@ jobs:
 
           # Bootloader tooling (systemd-boot).
           bootctl_path=$(command -v bootctl || true)
-          if [[ -z "$bootctl_path" ]]; then
-            echo "ERROR: bootctl not found in PATH" >&2
-            exit 1
+          if [[ -n "$bootctl_path" ]]; then
+            copy_bin_with_libs "$bootctl_path"
+          else
+            echo "WARN: bootctl not found in PATH; installer will copy systemd-boot EFI directly"
           fi
-          copy_bin_with_libs "$bootctl_path"
           if [[ -d /usr/lib/systemd/boot/efi ]]; then
             mkdir -p rootfs/usr/lib/systemd/boot
             cp -a /usr/lib/systemd/boot/efi rootfs/usr/lib/systemd/boot/
+          else
+            echo "ERROR: /usr/lib/systemd/boot/efi not found (need systemd-boot EFI binaries)" >&2
+            exit 1
           fi
           
           cat > rootfs/etc/inittab <<'EOF'
