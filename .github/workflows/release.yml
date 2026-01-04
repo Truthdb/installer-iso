@@ -88,6 +88,7 @@ jobs:
             cpio zstd \
             busybox-static \
             util-linux \
+            efibootmgr \
             debootstrap debian-archive-keyring \
             python3 \
             systemd \
@@ -301,6 +302,9 @@ jobs:
           copy_bin_with_libs /usr/bin/umount
           copy_bin_with_libs /usr/bin/tar
           copy_bin_with_libs /usr/bin/zstd
+
+          # UEFI NVRAM boot entry helper (makes UTM/OVMF boot reliably).
+          copy_bin_with_libs /usr/sbin/efibootmgr
 
           # Bootloader tooling (systemd-boot).
           bootctl_path=$(command -v bootctl || true)
