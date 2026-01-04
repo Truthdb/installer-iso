@@ -134,7 +134,7 @@ jobs:
           sudo debootstrap \
             --arch=amd64 \
             --variant=minbase \
-            --include=systemd-sysv,linux-image-amd64,initramfs-tools,ca-certificates \
+            --include=systemd-sysv,linux-image-amd64,initramfs-tools,ca-certificates,sudo,passwd \
             bookworm \
             "$ROOTFS_DIR" \
             http://deb.debian.org/debian
@@ -308,6 +308,15 @@ jobs:
           copy_bin_with_libs /usr/bin/umount
           copy_bin_with_libs /usr/bin/tar
           copy_bin_with_libs /usr/bin/zstd
+
+          # Needed for configuring the installed system (passwords/users) from initramfs.
+          chroot_path=$(command -v chroot || true)
+          if [[ -n "$chroot_path" ]]; then
+            copy_bin_with_libs "$chroot_path"
+          else
+            echo "ERROR: chroot not found in PATH" >&2
+            exit 1
+          fi
 
           # Bootloader tooling (systemd-boot).
           bootctl_path=$(command -v bootctl || true)
