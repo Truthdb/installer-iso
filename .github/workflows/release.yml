@@ -294,7 +294,13 @@ jobs:
           copy_bin_with_libs /usr/sbin/sfdisk
           copy_bin_with_libs /usr/sbin/partprobe
           copy_bin_with_libs /usr/sbin/blkid
-
+          efibootmgr_path=$(command -v efibootmgr || true)
+          if [[ -n "$efibootmgr_path" ]]; then
+            copy_bin_with_libs "$efibootmgr_path"
+          else
+            echo "ERROR: efibootmgr not found in PATH" >&2
+            exit 1
+          fi
           # Filesystem + mount + extraction tools used by the installer.
           copy_bin_with_libs /usr/sbin/mkfs.vfat
           copy_bin_with_libs /usr/sbin/mkfs.ext4
@@ -302,9 +308,6 @@ jobs:
           copy_bin_with_libs /usr/bin/umount
           copy_bin_with_libs /usr/bin/tar
           copy_bin_with_libs /usr/bin/zstd
-
-          # UEFI NVRAM boot entry helper (makes UTM/OVMF boot reliably).
-          copy_bin_with_libs /usr/sbin/efibootmgr
 
           # Bootloader tooling (systemd-boot).
           bootctl_path=$(command -v bootctl || true)
