@@ -90,6 +90,7 @@ jobs:
             util-linux \
             debootstrap debian-archive-keyring \
             python3 \
+            systemd \
             systemd-ukify \
             systemd-boot-efi \
             file \
@@ -302,7 +303,12 @@ jobs:
           copy_bin_with_libs /usr/bin/zstd
 
           # Bootloader tooling (systemd-boot).
-          copy_bin_with_libs /usr/bin/bootctl
+          bootctl_path=$(command -v bootctl || true)
+          if [[ -z "$bootctl_path" ]]; then
+            echo "ERROR: bootctl not found in PATH" >&2
+            exit 1
+          fi
+          copy_bin_with_libs "$bootctl_path"
           if [[ -d /usr/lib/systemd/boot/efi ]]; then
             mkdir -p rootfs/usr/lib/systemd/boot
             cp -a /usr/lib/systemd/boot/efi rootfs/usr/lib/systemd/boot/
