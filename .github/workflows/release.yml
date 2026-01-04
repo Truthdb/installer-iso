@@ -291,6 +291,7 @@ jobs:
           copy_bin_with_libs /usr/sbin/wipefs
           copy_bin_with_libs /usr/sbin/sfdisk
           copy_bin_with_libs /usr/sbin/partprobe
+          copy_bin_with_libs /usr/sbin/blkid
 
           # Filesystem + mount + extraction tools used by the installer.
           copy_bin_with_libs /usr/sbin/mkfs.vfat
@@ -299,6 +300,13 @@ jobs:
           copy_bin_with_libs /usr/bin/umount
           copy_bin_with_libs /usr/bin/tar
           copy_bin_with_libs /usr/bin/zstd
+
+          # Bootloader tooling (systemd-boot).
+          copy_bin_with_libs /usr/bin/bootctl
+          if [[ -d /usr/lib/systemd/boot/efi ]]; then
+            mkdir -p rootfs/usr/lib/systemd/boot
+            cp -a /usr/lib/systemd/boot/efi rootfs/usr/lib/systemd/boot/
+          fi
           
           cat > rootfs/etc/inittab <<'EOF'
           ::sysinit:/bin/busybox mount -t proc proc /proc
