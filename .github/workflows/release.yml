@@ -139,8 +139,47 @@ jobs:
             "$ROOTFS_DIR" \
             http://deb.debian.org/debian
 
-          # Sanity checks: verify key tools exist in the payload.
+          # Embed the matching TruthDB service artifacts into the payload.
+          VERSION="${{ needs.create-release.outputs.version }}"
+          echo "Looking for truthdb version v${VERSION}"
+
+          RELEASE=$(curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/Truthdb/truthdb/releases/tags/v${VERSION}" || true)
+
+          if echo "$RELEASE" | jq -e '.message == "Not Found"' > /dev/null; then
+            echo "ERROR: No matching release v${VERSION} found in truthdb repo"
+            echo "Refusing to build an ISO with mixed versions."
+            exit 1
+          fi
+
+          DOWNLOAD_URL=$(echo "$RELEASE" | jq -r '.assets // [] | .[] | select(.name | endswith("-x86_64-linux-gnu.tar.gz")) | .browser_download_url' | head -n 1)
+          if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
+            echo "ERROR: No truthdb binary archive found in release (expected *-x86_64-linux-gnu.tar.gz)"
+            exit 1
+          fi
+
+          echo "Downloading truthdb from: $DOWNLOAD_URL"
+          rm -rf truthdb-dist
+          mkdir -p truthdb-dist
+          curl -fsSL -o truthdb-dist/truthdb.tar.gz "$DOWNLOAD_URL"
+          tar xzf truthdb-dist/truthdb.tar.gz -C truthdb-dist
+
+          # Install into the rootfs payload.
+          sudo install -d "$ROOTFS_DIR/usr/local/bin" "$ROOTFS_DIR/lib/systemd/system" "$ROOTFS_DIR/etc/systemd/system/multi-user.target.wants"
+          sudo install -m 0755 truthdb-dist/truthdb "$ROOTFS_DIR/usr/local/bin/truthdb"
+          sudo install -m 0644 truthdb-dist/truthdb.service "$ROOTFS_DIR/lib/systemd/system/truthdb.service"
+
+          # Enable at boot (multi-user target).
+          sudo ln -sf /lib/systemd/system/truthdb.service \
+            "$ROOTFS_DIR/etc/systemd/system/multi-user.target.wants/truthdb.service"
+
+          # Sanity checks: verify key tools and service artifacts exist in the payload.
           test -x "$ROOTFS_DIR/usr/sbin/ip" || test -x "$ROOTFS_DIR/bin/ip" || test -x "$ROOTFS_DIR/sbin/ip"
+          test -x "$ROOTFS_DIR/usr/local/bin/truthdb"
+          test -f "$ROOTFS_DIR/lib/systemd/system/truthdb.service"
+          test -L "$ROOTFS_DIR/etc/systemd/system/multi-user.target.wants/truthdb.service"
 
           # Shrink the payload: remove apt lists/caches and documentation.
           sudo rm -rf "$ROOTFS_DIR/var/lib/apt/lists"/* || true
