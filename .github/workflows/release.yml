@@ -393,7 +393,8 @@ jobs:
           fi
           
           cat > rootfs/etc/inittab <<'EOF'
-          ::respawn:/bin/truthdb-installer
+          ::once:/bin/truthdb-installer
+          ::askfirst:/bin/sh
           ::restart:/bin/busybox reboot -f
           EOF
           
