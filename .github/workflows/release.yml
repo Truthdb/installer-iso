@@ -397,7 +397,7 @@ jobs:
           
           # Create cmdline
           cat > cmdline.txt <<'EOF'
-          console=ttyS0 earlyprintk=serial loglevel=7 rdinit=/sbin/init
+          console=tty0 console=ttyS0,115200 earlycon=efi loglevel=7 rdinit=/sbin/init
           EOF
           
           # Build UKI
@@ -446,7 +446,9 @@ jobs:
             -e efi.img \
             -no-emul-boot \
             -isohybrid-gpt-basdat \
-            -graft-points efi.img=efi.img
+            -graft-points \
+              efi.img=efi.img \
+              EFI/BOOT/BOOTX64.EFI=TruthDBInstaller.efi
           
           echo "ISO ready: $ISO_NAME"
           ls -lh "$ISO_NAME"
