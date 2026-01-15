@@ -166,8 +166,7 @@ jobs:
           chmod +x rootfs/bin/truthdb-installer
           
           cat > rootfs/etc/inittab <<'EOF'
-          ::once:/bin/truthdb-installer
-          ::askfirst:/bin/sh
+          ::respawn:/bin/truthdb-installer
           ::restart:/bin/busybox reboot -f
           EOF
           
