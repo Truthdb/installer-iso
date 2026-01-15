@@ -318,23 +318,6 @@ jobs:
           chmod +x rootfs/bin/busybox
           ln -sf /bin/busybox rootfs/sbin/init
           ln -sf /bin/busybox rootfs/bin/sh
-
-          # Make sure PID1 has a real console (important on some hypervisors).
-          # If the kernel starts init without /dev/console available, stdout/stderr
-          # can end up pointing at /dev/null and all user-space logs disappear.
-          cat > rootfs/init <<'EOF'
-          #!/bin/busybox sh
-          /bin/busybox mount -t proc proc /proc
-          /bin/busybox mount -t sysfs sysfs /sys
-          /bin/busybox mount -t devtmpfs devtmpfs /dev
-          /bin/busybox mount -t devpts devpts /dev/pts 2>/dev/null || true
-
-          CONSOLE=/dev/console
-          [ -c "$CONSOLE" ] || CONSOLE=/dev/tty0
-
-          exec <"$CONSOLE" >"$CONSOLE" 2>&1 /bin/busybox cttyhack /sbin/init
-          EOF
-          chmod +x rootfs/init
           
           cp "$INSTALLER_BIN" rootfs/bin/truthdb-installer
           chmod +x rootfs/bin/truthdb-installer
@@ -393,8 +376,10 @@ jobs:
           fi
           
           cat > rootfs/etc/inittab <<'EOF'
-          ::once:/bin/truthdb-installer
-          ::askfirst:/bin/sh
+          ::sysinit:/bin/busybox mount -t proc proc /proc
+          ::sysinit:/bin/busybox mount -t sysfs sysfs /sys
+          ::sysinit:/bin/busybox mount -t devtmpfs devtmpfs /dev
+          ::respawn:/bin/truthdb-installer
           ::restart:/bin/busybox reboot -f
           EOF
           
@@ -412,7 +397,7 @@ jobs:
           
           # Create cmdline
           cat > cmdline.txt <<'EOF'
-          console=tty0 console=ttyS0,115200 earlycon=efi loglevel=7 rdinit=/init
+          console=ttyS0 earlyprintk=serial loglevel=7 rdinit=/sbin/init
           EOF
           
           # Build UKI
@@ -461,9 +446,7 @@ jobs:
             -e efi.img \
             -no-emul-boot \
             -isohybrid-gpt-basdat \
-            -graft-points \
-              efi.img=efi.img \
-              EFI/BOOT/BOOTX64.EFI=TruthDBInstaller.efi
+            -graft-points efi.img=efi.img
           
           echo "ISO ready: $ISO_NAME"
           ls -lh "$ISO_NAME"
