@@ -100,7 +100,7 @@ cat > rootfs/etc/inittab <<'EOF'
 #::sysinit:/bin/busybox sh -c 'echo "--- FBDEV ---"; /bin/busybox ls -l /dev/fb* 2>&1 || echo "NO /dev/fb*"'
 #::sysinit:/bin/busybox sh -c 'echo "--- DRM ---"; /bin/busybox ls -l /dev/dri/* 2>&1 || echo "NO /dev/dri/*"'
 #::sysinit:/bin/busybox sh -c 'echo "--- DMESG (graphics) ---"; /bin/busybox dmesg | /bin/busybox grep -Ei "efi|gop|efifb|simplefb|simpledrm|drm|framebuffer" || echo "NO MATCHES"'
-::respawn:/bin/truthdb-installer
+::respawn:/bin/busybox sh -c '/bin/truthdb-installer </dev/console >/dev/console 2>&1'
 ::restart:/bin/busybox reboot -f
 EOF
 
