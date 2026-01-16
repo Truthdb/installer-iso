@@ -397,7 +397,7 @@ jobs:
           
           # Create cmdline
           cat > cmdline.txt <<'EOF'
-          console=ttyS0 earlyprintk=serial loglevel=7 rdinit=/sbin/init
+          console=tty0 console=ttyS0,115200 earlycon=efi loglevel=7 rdinit=/sbin/init
           EOF
           
           # Build UKI
