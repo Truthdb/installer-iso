@@ -152,7 +152,7 @@ jobs:
           ::sysinit:/bin/busybox mount -t proc proc /proc
           ::sysinit:/bin/busybox mount -t sysfs sysfs /sys
           ::sysinit:/bin/busybox mount -t devtmpfs devtmpfs /dev
-          ::respawn:/bin/truthdb-installer
+          ::respawn:/bin/busybox sh -c '/bin/truthdb-installer </dev/console >/dev/console 2>&1'
           ::restart:/bin/busybox reboot -f
           EOF
           
