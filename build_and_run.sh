@@ -113,7 +113,7 @@ zstd -19 -T0 initramfs.cpio -o initramfs.cpio.zst
 #console=ttyS0 earlyprintk=serial loglevel=7 rdinit=/sbin/init
 #EOF
 cat > cmdline.txt <<'EOF'
-console=tty0 console=ttyS0,115200 earlycon=efi loglevel=7 rdinit=/sbin/init
+console=ttyS0,115200 earlycon=efi loglevel=7 console=tty0 rdinit=/sbin/init
 EOF
 
 # ================= UKI =================
