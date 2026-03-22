@@ -43,12 +43,12 @@ This will:
 On tag pushes (`v*`), the release workflow:
 
 - Builds a Debian (bookworm/amd64) minbase payload via `debootstrap`
-- Downloads the latest published `truthdb`, `installer`, and `installer-kernel` release artifacts available at build time
+- Downloads the current latest released `truthdb`, `installer`, and `installer-kernel` artifacts
 - Embeds the payload at `/payload/debian-minbase-amd64-bookworm.tar.zst` in initramfs
 - Copies required external tools (partitioning, filesystems, tar/zstd, chroot, efibootmgr, systemd-boot EFI bits) into initramfs
 - Produces `truthdb-installer-vX.Y.Z.iso` + `truthdb-installer-vX.Y.Z.iso.sha256`
 
-The workflow is not version-locked to the `installer-iso` tag. To control what gets embedded, publish the desired dependency releases before tagging `installer-iso`.
+The workflow does not version-lock dependency artifacts. To control what gets embedded, publish the desired `truthdb`, `installer`, and `installer-kernel` releases before tagging `installer-iso`.
 
 ## License
 
