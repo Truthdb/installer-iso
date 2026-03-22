@@ -137,8 +137,13 @@ jobs:
           echo "Using truthdb release: ${DEP_TAG}"
 
           DOWNLOAD_URL=$(echo "$RELEASE" | jq -r '.assets // [] | .[] | select(.name | endswith("-x86_64-linux-gnu.tar.gz")) | .browser_download_url' | head -n 1)
+          CHECKSUM_URL=$(echo "$RELEASE" | jq -r '.assets // [] | .[] | select(.name | endswith("-x86_64-linux-gnu.sha256")) | .browser_download_url' | head -n 1)
           if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
             echo "ERROR: No truthdb binary archive found in release (expected *-x86_64-linux-gnu.tar.gz)"
+            exit 1
+          fi
+          if [ -z "$CHECKSUM_URL" ] || [ "$CHECKSUM_URL" = "null" ]; then
+            echo "ERROR: No truthdb checksum found in release (expected *-x86_64-linux-gnu.sha256)"
             exit 1
           fi
 
@@ -146,7 +151,19 @@ jobs:
           rm -rf truthdb-dist
           mkdir -p truthdb-dist
           curl -fsSL -o truthdb-dist/truthdb.tar.gz "$DOWNLOAD_URL"
+          curl -fsSL -o truthdb-dist/truthdb.sha256 "$CHECKSUM_URL"
           tar xzf truthdb-dist/truthdb.tar.gz -C truthdb-dist
+          test -x truthdb-dist/truthdb
+          test -f truthdb-dist/truthdb.service
+
+          expected_truthdb_sha=$(awk 'NR==1 {print $1}' truthdb-dist/truthdb.sha256)
+          actual_truthdb_sha=$(sha256sum truthdb-dist/truthdb | awk '{print $1}')
+          if [ -z "$expected_truthdb_sha" ] || [ "$expected_truthdb_sha" != "$actual_truthdb_sha" ]; then
+            echo "ERROR: truthdb checksum verification failed"
+            echo "Expected: ${expected_truthdb_sha:-<empty>}"
+            echo "Actual:   $actual_truthdb_sha"
+            exit 1
+          fi
 
           # Install into the rootfs payload.
           sudo install -d "$ROOTFS_DIR/usr/local/bin" "$ROOTFS_DIR/lib/systemd/system" "$ROOTFS_DIR/etc/systemd/system/multi-user.target.wants"
@@ -201,9 +218,14 @@ jobs:
           
           # Download the installer binary
           DOWNLOAD_URL=$(echo "$RELEASE" | jq -r '.assets // [] | .[] | select(.name | contains("truthdb-installer")) | select(.name | endswith(".tar.gz")) | .browser_download_url' | head -n 1)
+          CHECKSUM_URL=$(echo "$RELEASE" | jq -r '.assets // [] | .[] | select(.name | contains("truthdb-installer")) | select(.name | endswith(".sha256")) | .browser_download_url' | head -n 1)
           
-          if [ -z "$DOWNLOAD_URL" ]; then
+          if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
             echo "No installer binary found in release"
+            exit 1
+          fi
+          if [ -z "$CHECKSUM_URL" ] || [ "$CHECKSUM_URL" = "null" ]; then
+            echo "No installer checksum found in release"
             exit 1
           fi
           
@@ -211,7 +233,16 @@ jobs:
           mkdir -p installer-bin
           cd installer-bin
           curl -fsSL -o installer.tar.gz "$DOWNLOAD_URL"
+          curl -fsSL -o truthdb-installer.sha256 "$CHECKSUM_URL"
           tar xzf installer.tar.gz
+          expected_installer_sha=$(awk 'NR==1 {print $1}' truthdb-installer.sha256)
+          actual_installer_sha=$(sha256sum truthdb-installer | awk '{print $1}')
+          if [ -z "$expected_installer_sha" ] || [ "$expected_installer_sha" != "$actual_installer_sha" ]; then
+            echo "ERROR: installer checksum verification failed"
+            echo "Expected: ${expected_installer_sha:-<empty>}"
+            echo "Actual:   $actual_installer_sha"
+            exit 1
+          fi
           chmod +x truthdb-installer
           cd ..
           
@@ -234,15 +265,25 @@ jobs:
           
           # Download the kernel (BOOTX64.EFI)
           DOWNLOAD_URL=$(echo "$RELEASE" | jq -r '.assets // [] | .[] | select(.name == "BOOTX64.EFI") | .browser_download_url' | head -n 1)
+          CHECKSUM_URL=$(echo "$RELEASE" | jq -r '.assets // [] | .[] | select(.name == "BOOTX64.EFI.sha256") | .browser_download_url' | head -n 1)
           
-          if [ -z "$DOWNLOAD_URL" ]; then
+          if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
             echo "No BOOTX64.EFI found in release"
+            exit 1
+          fi
+          if [ -z "$CHECKSUM_URL" ] || [ "$CHECKSUM_URL" = "null" ]; then
+            echo "No BOOTX64.EFI.sha256 found in release"
             exit 1
           fi
           
           echo "Downloading kernel from: $DOWNLOAD_URL"
           mkdir -p kernel-bin
           curl -fsSL -o kernel-bin/BOOTX64.EFI "$DOWNLOAD_URL"
+          curl -fsSL -o kernel-bin/BOOTX64.EFI.sha256 "$CHECKSUM_URL"
+          (
+            cd kernel-bin
+            sha256sum -c BOOTX64.EFI.sha256
+          )
           
           # Verify the kernel exists
           ls -lh kernel-bin/BOOTX64.EFI
