@@ -43,7 +43,7 @@ This will:
 On tag pushes (`v*`), the release workflow:
 
 - Builds a Debian (bookworm/amd64) minbase payload via `debootstrap`
-- Downloads the current latest released `truthdb`, `installer`, and `installer-kernel` artifacts
+- Downloads the current latest released `truthdb`, `installer`, and `installer-kernel` artifacts and verifies their published checksums
 - Embeds the payload at `/payload/debian-minbase-amd64-bookworm.tar.zst` in initramfs
 - Copies required external tools (partitioning, filesystems, tar/zstd, chroot, efibootmgr, systemd-boot EFI bits) into initramfs
 - Produces `truthdb-installer-vX.Y.Z.iso` + `truthdb-installer-vX.Y.Z.iso.sha256`
