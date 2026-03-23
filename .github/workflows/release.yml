@@ -74,12 +74,17 @@ jobs:
             cpio zstd \
             busybox-static \
             util-linux \
+            fdisk \
+            parted \
+            e2fsprogs \
             efibootmgr \
             debootstrap debian-archive-keyring \
             python3 \
             systemd \
-            systemd-ukify \
             systemd-boot-efi \
+            grub-common \
+            grub-pc-bin \
+            grub-efi-amd64-bin \
             file \
             xorriso \
             dosfstools mtools \
@@ -110,98 +115,18 @@ jobs:
           echo "==> Disk usage (before debootstrap)"
           df -h
 
-          PAYLOAD_NAME="debian-minbase-amd64-bookworm.tar.zst"
-          ROOTFS_DIR="${PWD}/debian-rootfs"
-
-          sudo rm -rf "$ROOTFS_DIR" "$PAYLOAD_NAME"
-
-          # Minimal bootable Debian userspace (kernel/initramfs installed into /boot by package scripts).
-          # Keep this list intentionally short; the installer will do host-specific config later.
-          sudo debootstrap \
-            --arch=amd64 \
-            --variant=minbase \
-            --include=systemd-sysv,systemd-resolved,linux-image-amd64,initramfs-tools,ca-certificates,sudo,passwd,iproute2,dbus \
-            bookworm \
-            "$ROOTFS_DIR" \
-            http://deb.debian.org/debian
-
-          # Embed the matching TruthDB service artifacts into the payload.
-          echo "Resolving latest truthdb release"
-
-          RELEASE=$(curl -fsSL \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/Truthdb/truthdb/releases/latest")
-
-          DEP_TAG=$(echo "$RELEASE" | jq -r '.tag_name')
-          echo "Using truthdb release: ${DEP_TAG}"
-
-          DOWNLOAD_URL=$(echo "$RELEASE" | jq -r '.assets // [] | .[] | select(.name | endswith("-x86_64-linux-gnu.tar.gz")) | .browser_download_url' | head -n 1)
-          CHECKSUM_URL=$(echo "$RELEASE" | jq -r '.assets // [] | .[] | select(.name | endswith("-x86_64-linux-gnu.sha256")) | .browser_download_url' | head -n 1)
-          if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
-            echo "ERROR: No truthdb binary archive found in release (expected *-x86_64-linux-gnu.tar.gz)"
-            exit 1
-          fi
-          if [ -z "$CHECKSUM_URL" ] || [ "$CHECKSUM_URL" = "null" ]; then
-            echo "ERROR: No truthdb checksum found in release (expected *-x86_64-linux-gnu.sha256)"
-            exit 1
-          fi
-
-          echo "Downloading truthdb from: $DOWNLOAD_URL"
-          rm -rf truthdb-dist
-          mkdir -p truthdb-dist
-          curl -fsSL -o truthdb-dist/truthdb.tar.gz "$DOWNLOAD_URL"
-          curl -fsSL -o truthdb-dist/truthdb.sha256 "$CHECKSUM_URL"
-          tar xzf truthdb-dist/truthdb.tar.gz -C truthdb-dist
-          test -x truthdb-dist/truthdb
-          test -f truthdb-dist/truthdb.service
-
-          expected_truthdb_sha=$(awk 'NR==1 {print $1}' truthdb-dist/truthdb.sha256)
-          actual_truthdb_sha=$(sha256sum truthdb-dist/truthdb | awk '{print $1}')
-          if [ -z "$expected_truthdb_sha" ] || [ "$expected_truthdb_sha" != "$actual_truthdb_sha" ]; then
-            echo "ERROR: truthdb checksum verification failed"
-            echo "Expected: ${expected_truthdb_sha:-<empty>}"
-            echo "Actual:   $actual_truthdb_sha"
-            exit 1
-          fi
-
-          # Install into the rootfs payload.
-          sudo install -d "$ROOTFS_DIR/usr/local/bin" "$ROOTFS_DIR/lib/systemd/system" "$ROOTFS_DIR/etc/systemd/system/multi-user.target.wants"
-          sudo install -m 0755 truthdb-dist/truthdb "$ROOTFS_DIR/usr/local/bin/truthdb"
-          sudo install -m 0644 truthdb-dist/truthdb.service "$ROOTFS_DIR/lib/systemd/system/truthdb.service"
-
-          # Enable at boot (multi-user target).
-          sudo ln -sf /lib/systemd/system/truthdb.service \
-            "$ROOTFS_DIR/etc/systemd/system/multi-user.target.wants/truthdb.service"
-
-          # Sanity checks: verify key tools and service artifacts exist in the payload.
-          test -x "$ROOTFS_DIR/usr/sbin/ip" || test -x "$ROOTFS_DIR/bin/ip" || test -x "$ROOTFS_DIR/sbin/ip"
-          test -x "$ROOTFS_DIR/usr/local/bin/truthdb"
-          test -f "$ROOTFS_DIR/lib/systemd/system/truthdb.service"
-          test -L "$ROOTFS_DIR/etc/systemd/system/multi-user.target.wants/truthdb.service"
-
-          # Shrink the payload: remove apt lists/caches and documentation.
-          sudo rm -rf "$ROOTFS_DIR/var/lib/apt/lists"/* || true
-          sudo rm -rf "$ROOTFS_DIR/var/cache/apt/archives"/*.deb || true
-          sudo rm -rf "$ROOTFS_DIR/usr/share/doc" || true
-          sudo rm -rf "$ROOTFS_DIR/usr/share/man" || true
-          sudo rm -rf "$ROOTFS_DIR/usr/share/info" || true
-          sudo rm -rf "$ROOTFS_DIR/usr/share/locale" || true
-
-          echo "==> Disk usage (after debootstrap + cleanup)"
-          df -h
-
-          sudo tar --numeric-owner -C "$ROOTFS_DIR" -cpf - . \
-            | zstd -19 -T0 -o "$PAYLOAD_NAME"
-
-          # Free workspace disk for subsequent ISO build steps.
-          sudo rm -rf "$ROOTFS_DIR"
+          chmod +x ./build_rootfs_payload.sh
+          export TRUTHDB_SOURCE=release
+          export TRUTHDB_REPO=Truthdb/truthdb
+          export ROOTFS_DIR="${PWD}/debian-rootfs"
+          export PAYLOAD_PATH="${PWD}/debian-minbase-amd64-bookworm.tar.zst"
+          ./build_rootfs_payload.sh
 
           echo "==> Disk usage (after packing payload)"
           df -h
 
-          ls -lh "$PAYLOAD_NAME"
-          echo "ROOTFS_PAYLOAD=${PWD}/${PAYLOAD_NAME}" >> "$GITHUB_ENV"
+          ls -lh "${PAYLOAD_PATH}"
+          echo "ROOTFS_PAYLOAD=${PAYLOAD_PATH}" >> "$GITHUB_ENV"
       
       - name: Download matching installer binary
         run: |
@@ -291,173 +216,17 @@ jobs:
       
       - name: Build ISO
         run: |
-          # Set environment variables for the build
           export KERNEL_SRC="${PWD}/kernel-bin/BOOTX64.EFI"
           export INSTALLER_BIN="${PWD}/installer-bin/truthdb-installer"
+          export ROOTFS_PAYLOAD="${ROOTFS_PAYLOAD}"
           export ISO_NAME="truthdb-installer.iso"
-          
-          # Verify files exist
-          ls -lh "$KERNEL_SRC" "$INSTALLER_BIN"
-          
-          # Build the initramfs
-          rm -rf rootfs
-          mkdir -p rootfs/{bin,sbin,etc,proc,sys,dev,run,tmp}
 
-          # Copy a dynamically linked binary and all of its shared library deps into rootfs.
-          copy_bin_with_libs() {
-            local src="$1"
-            if [[ ! -x "$src" ]]; then
-              echo "ERROR: required tool not found or not executable: $src" >&2
-              exit 1
-            fi
+          ls -lh "$KERNEL_SRC" "$INSTALLER_BIN" "$ROOTFS_PAYLOAD"
+          chmod +x ./build_iso.sh
+          ./build_iso.sh
 
-            mkdir -p "rootfs$(dirname "$src")"
-            cp -L "$src" "rootfs$src"
-
-            ldd "$src" \
-              | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^\//) print $i }' \
-              | while read -r dep; do
-                  mkdir -p "rootfs$(dirname "$dep")"
-                  cp -L "$dep" "rootfs$dep"
-                done
-          }
-          
-          cp /bin/busybox rootfs/bin/busybox
-          chmod +x rootfs/bin/busybox
-          ln -sf /bin/busybox rootfs/sbin/init
-          ln -sf /bin/busybox rootfs/bin/sh
-          
-          cp "$INSTALLER_BIN" rootfs/bin/truthdb-installer
-          chmod +x rootfs/bin/truthdb-installer
-
-          # Offline Debian payload embedded in initramfs.
-          mkdir -p rootfs/payload
-          cp "$ROOTFS_PAYLOAD" rootfs/payload/debian-minbase-amd64-bookworm.tar.zst
-
-          echo "==> Sizes before initramfs pack"
-          ls -lh "$ROOTFS_PAYLOAD" || true
-          du -sh rootfs || true
-
-          # Required external tools for destructive install steps.
-          # These must exist in initramfs because the installer execs them directly (no shell).
-          copy_bin_with_libs /usr/sbin/wipefs
-          copy_bin_with_libs /usr/sbin/sfdisk
-          copy_bin_with_libs /usr/sbin/partprobe
-          copy_bin_with_libs /usr/sbin/blkid
-          efibootmgr_path=$(command -v efibootmgr || true)
-          if [[ -n "$efibootmgr_path" ]]; then
-            copy_bin_with_libs "$efibootmgr_path"
-          else
-            echo "ERROR: efibootmgr not found in PATH" >&2
-            exit 1
-          fi
-          # Filesystem + mount + extraction tools used by the installer.
-          copy_bin_with_libs /usr/sbin/mkfs.vfat
-          copy_bin_with_libs /usr/sbin/mkfs.ext4
-          copy_bin_with_libs /usr/bin/mount
-          copy_bin_with_libs /usr/bin/umount
-          copy_bin_with_libs /usr/bin/tar
-          copy_bin_with_libs /usr/bin/zstd
-
-          # Needed for configuring the installed system (passwords/users) from initramfs.
-          chroot_path=$(command -v chroot || true)
-          if [[ -n "$chroot_path" ]]; then
-            copy_bin_with_libs "$chroot_path"
-          else
-            echo "ERROR: chroot not found in PATH" >&2
-            exit 1
-          fi
-
-          # Bootloader tooling (systemd-boot).
-          bootctl_path=$(command -v bootctl || true)
-          if [[ -n "$bootctl_path" ]]; then
-            copy_bin_with_libs "$bootctl_path"
-          else
-            echo "WARN: bootctl not found in PATH; installer will copy systemd-boot EFI directly"
-          fi
-          if [[ -d /usr/lib/systemd/boot/efi ]]; then
-            mkdir -p rootfs/usr/lib/systemd/boot
-            cp -a /usr/lib/systemd/boot/efi rootfs/usr/lib/systemd/boot/
-          else
-            echo "ERROR: /usr/lib/systemd/boot/efi not found (need systemd-boot EFI binaries)" >&2
-            exit 1
-          fi
-          
-          cat > rootfs/etc/inittab <<'EOF'
-          ::sysinit:/bin/busybox mount -t proc proc /proc
-          ::sysinit:/bin/busybox mount -t sysfs sysfs /sys
-          ::sysinit:/bin/busybox mount -t devtmpfs devtmpfs /dev
-          ::respawn:/bin/busybox sh -c '/bin/truthdb-installer </dev/console >/dev/console 2>&1'
-          ::restart:/bin/busybox reboot -f
-          EOF
-          
-          # Build initramfs without storing a giant intermediate initramfs.cpio on disk.
-          rm -f initramfs.cpio.zst
-          ( cd rootfs && find . -print0 | cpio --null -ov --format=newc ) \
-            | zstd -19 -T0 -o initramfs.cpio.zst
-
-          # Free workspace disk ASAP; the payload is now inside initramfs.
-          rm -rf rootfs
           rm -f "$ROOTFS_PAYLOAD" || true
-
-          echo "==> Sizes after initramfs pack"
-          ls -lh initramfs.cpio.zst
-          
-          # Create cmdline
-          cat > cmdline.txt <<'EOF'
-          console=ttyS0,115200 earlycon=efi loglevel=7 console=tty0 rdinit=/sbin/init
-          EOF
-          
-          # Build UKI
-          cp "$KERNEL_SRC" ./vmlinuz
-          
-          ukify build \
-            --linux ./vmlinuz \
-            --initrd ./initramfs.cpio.zst \
-            --cmdline @./cmdline.txt \
-            --output ./TruthDBInstaller.efi
-          
-          file ./TruthDBInstaller.efi
-
-          # We no longer need these large intermediates after the UKI is built.
-          rm -f initramfs.cpio.zst
-          rm -f vmlinuz cmdline.txt
           rm -rf installer-bin kernel-bin || true
-
-          echo "==> Disk usage before creating EFI image"
-          df -h
-          
-          # Create EFI image
-          rm -f efi.img
-
-          # Size the FAT image based on the UKI size (avoid wasting space on small runners).
-          uki_bytes=$(stat -c%s ./TruthDBInstaller.efi)
-          uki_mib=$(( (uki_bytes + 1024*1024 - 1) / (1024*1024) ))
-          efi_mib=$(( uki_mib + 32 ))
-          if (( efi_mib < 32 )); then efi_mib=32; fi
-          echo "Creating efi.img: ${efi_mib}MiB (UKI ~${uki_mib}MiB)"
-
-          dd if=/dev/zero of=efi.img bs=1M count="$efi_mib"
-          mkfs.vfat -F 32 efi.img
-          
-          mmd   -i efi.img ::/EFI
-          mmd   -i efi.img ::/EFI/BOOT
-          mcopy -i efi.img ./TruthDBInstaller.efi ::/EFI/BOOT/BOOTX64.EFI
-          
-          # Create ISO
-          rm -f "$ISO_NAME"
-          
-          xorriso -as mkisofs \
-            -R -J \
-            -o "$ISO_NAME" \
-            -eltorito-alt-boot \
-            -e efi.img \
-            -no-emul-boot \
-            -isohybrid-gpt-basdat \
-            -graft-points efi.img=efi.img
-          
-          echo "ISO ready: $ISO_NAME"
-          ls -lh "$ISO_NAME"
       
       - name: Generate checksum
         run: |

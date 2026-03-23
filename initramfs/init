@@ -1,0 +1,59 @@
+#!/bin/busybox sh
+set -eu
+
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+
+has_flag() {
+  for arg in $(cat /proc/cmdline); do
+    if [ "$arg" = "$1" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+mkdir -p /dev/pts /run /tmp
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+mount -t tmpfs tmpfs /run 2>/dev/null || true
+
+echo /bin/busybox mdev > /proc/sys/kernel/hotplug 2>/dev/null || true
+/bin/busybox mdev -s 2>/dev/null || true
+
+if ! has_flag truthdb.debug=1; then
+  echo 1 > /proc/sys/kernel/printk 2>/dev/null || true
+  /bin/busybox dmesg -n 1 2>/dev/null || true
+fi
+
+ui_tty="/dev/console"
+if has_flag truthdb.serial_ui=1; then
+  ui_tty="/dev/ttyS0"
+elif has_flag truthdb.ui_vt1=1; then
+  ui_tty="/dev/tty1"
+fi
+if [ ! -c "$ui_tty" ]; then
+  ui_tty="/dev/console"
+fi
+
+if [ "$ui_tty" = "/dev/tty1" ]; then
+  /bin/busybox chvt 1 >/dev/null 2>&1 || true
+fi
+
+exec <"$ui_tty" >"$ui_tty" 2>&1
+/bin/busybox clear >/dev/null 2>&1 || true
+
+if has_flag truthdb.rescue=1; then
+  echo "TruthDB rescue shell"
+  exec /bin/busybox setsid /bin/busybox cttyhack /bin/busybox sh
+fi
+
+echo "Starting TruthDB installer..."
+if /bin/busybox setsid /bin/busybox cttyhack /bin/truthdb-installer; then
+  exec /bin/busybox reboot -f
+fi
+
+echo
+echo "[ERR] Installer exited unexpectedly. Opening rescue shell."
+exec /bin/busybox setsid /bin/busybox cttyhack /bin/busybox sh
