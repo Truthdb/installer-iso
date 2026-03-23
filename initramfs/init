@@ -1,10 +1,15 @@
 #!/bin/busybox sh
+# shellcheck shell=dash
 set -eu
 
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
 has_flag() {
-  for arg in $(cat /proc/cmdline); do
+  cmdline=
+  if [ -r /proc/cmdline ]; then
+    cmdline=$(cat /proc/cmdline)
+  fi
+  for arg in $cmdline; do
     if [ "$arg" = "$1" ]; then
       return 0
     fi
@@ -41,7 +46,9 @@ if [ "$ui_tty" = "/dev/tty1" ]; then
   /bin/busybox chvt 1 >/dev/null 2>&1 || true
 fi
 
-exec <"$ui_tty" >"$ui_tty" 2>&1
+exec 0<"$ui_tty"
+exec 1>"$ui_tty"
+exec 2>&1
 /bin/busybox clear >/dev/null 2>&1 || true
 
 if has_flag truthdb.rescue=1; then
