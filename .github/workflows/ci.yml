@@ -22,7 +22,7 @@ jobs:
           sudo apt-get install -y shellcheck
 
       - name: Shellcheck
-        run: shellcheck ./build_and_run.sh ./run_container.sh
+        run: shellcheck ./build_and_run.sh ./build_in_container.sh ./build_iso.sh ./build_rootfs_payload.sh ./run_container.sh ./initramfs/init
 
   build:
     name: Build ISO
@@ -42,9 +42,17 @@ jobs:
             build-essential pkg-config \
             cpio zstd \
             busybox-static \
+            util-linux \
+            fdisk \
+            parted \
+            e2fsprogs \
+            efibootmgr \
             python3 \
-            systemd-ukify \
+            systemd \
             systemd-boot-efi \
+            grub-common \
+            grub-pc-bin \
+            grub-efi-amd64-bin \
             file \
             xorriso \
             dosfstools mtools \
@@ -128,77 +136,13 @@ jobs:
       
       - name: Build ISO
         run: |
-          # Set environment variables for the build script
           export KERNEL_SRC="${PWD}/kernel-bin/BOOTX64.EFI"
           export INSTALLER_BIN="${PWD}/installer-bin/truthdb-installer"
           export ISO_NAME="truthdb-installer.iso"
-          
-          # Verify files exist
+
           ls -lh "$KERNEL_SRC" "$INSTALLER_BIN"
-          
-          # Build the initramfs
-          rm -rf rootfs
-          mkdir -p rootfs/{bin,sbin,etc,proc,sys,dev,run,tmp}
-          
-          cp /bin/busybox rootfs/bin/busybox
-          chmod +x rootfs/bin/busybox
-          ln -sf /bin/busybox rootfs/sbin/init
-          ln -sf /bin/busybox rootfs/bin/sh
-          
-          cp "$INSTALLER_BIN" rootfs/bin/truthdb-installer
-          chmod +x rootfs/bin/truthdb-installer
-          
-          cat > rootfs/etc/inittab <<'EOF'
-          ::sysinit:/bin/busybox mount -t proc proc /proc
-          ::sysinit:/bin/busybox mount -t sysfs sysfs /sys
-          ::sysinit:/bin/busybox mount -t devtmpfs devtmpfs /dev
-          ::respawn:/bin/busybox sh -c '/bin/truthdb-installer </dev/console >/dev/console 2>&1'
-          ::restart:/bin/busybox reboot -f
-          EOF
-          
-          rm -f initramfs.cpio initramfs.cpio.zst
-          ( cd rootfs && find . -print0 | cpio --null -ov --format=newc ) > initramfs.cpio
-          zstd -19 -T0 initramfs.cpio -o initramfs.cpio.zst
-          
-          # Create cmdline
-          cat > cmdline.txt <<'EOF'
-          console=ttyS0,115200 earlycon=efi loglevel=7 console=tty0 rdinit=/sbin/init
-          EOF
-          
-          # Build UKI
-          cp "$KERNEL_SRC" ./vmlinuz
-          
-          ukify build \
-            --linux ./vmlinuz \
-            --initrd ./initramfs.cpio.zst \
-            --cmdline @./cmdline.txt \
-            --output ./TruthDBInstaller.efi
-          
-          file ./TruthDBInstaller.efi
-          
-          # Create EFI image
-          rm -f efi.img
-          dd if=/dev/zero of=efi.img bs=1M count=128
-          mkfs.vfat -F 32 efi.img
-          
-          mmd   -i efi.img ::/EFI
-          mmd   -i efi.img ::/EFI/BOOT
-          mcopy -i efi.img ./TruthDBInstaller.efi ::/EFI/BOOT/BOOTX64.EFI
-          
-          # Create ISO
-          rm -f "$ISO_NAME"
-          
-          xorriso -as mkisofs \
-            -R -J \
-            -o "$ISO_NAME" \
-            -eltorito-alt-boot \
-            -e efi.img \
-            -no-emul-boot \
-            -isohybrid-gpt-basdat \
-            -graft-points efi.img=efi.img
-          
-          echo "ISO ready: $ISO_NAME"
-          ls -lh "$ISO_NAME"
+          chmod +x ./build_iso.sh
+          ./build_iso.sh
       
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4

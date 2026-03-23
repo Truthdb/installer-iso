@@ -24,11 +24,14 @@ target
 rootfs/
 initramfs.cpio
 initramfs.cpio.zst
+initrd.img
+iso-root/
 cmdline.txt
 vmlinuz
 TruthDBInstaller.efi
 efi.img
 *.iso
+*.iso.sha256
 OVMF_CODE.fd
 OVMF_VARS.fd
 
