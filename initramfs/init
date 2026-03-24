@@ -24,7 +24,9 @@ mkdir -p /dev/pts /run /tmp
 mount -t devpts devpts /dev/pts 2>/dev/null || true
 mount -t tmpfs tmpfs /run 2>/dev/null || true
 
-echo /bin/busybox mdev > /proc/sys/kernel/hotplug 2>/dev/null || true
+if [ -w /proc/sys/kernel/hotplug ]; then
+  echo /bin/busybox mdev > /proc/sys/kernel/hotplug 2>/dev/null || true
+fi
 /bin/busybox mdev -s 2>/dev/null || true
 
 if ! has_flag truthdb.debug=1; then
