@@ -84,6 +84,8 @@ docker_args+=(
   -e "BUILD_ROOTFS_PAYLOAD=${BUILD_ROOTFS_PAYLOAD}"
   -e "TRUTHDB_SOURCE=${TRUTHDB_SOURCE}"
   -e "BOOT_TEST=${BOOT_TEST}"
+  -e "HOST_UID=$(id -u)"
+  -e "HOST_GID=$(id -g)"
   ubuntu:24.04
   bash
   -lc
