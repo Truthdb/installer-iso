@@ -232,16 +232,18 @@ jobs:
           rm -f "$ROOTFS_PAYLOAD" || true
           rm -rf installer-bin kernel-bin || true
       
-      - name: Generate checksum
-        run: |
-          sha256sum truthdb-installer.iso > truthdb-installer-v${{ needs.create-release.outputs.version }}.iso.sha256
-          cat truthdb-installer-v${{ needs.create-release.outputs.version }}.iso.sha256
-      
       - name: Rename ISO with version
         run: |
           mkdir -p dist
           mv truthdb-installer.iso "dist/truthdb-installer-v${{ needs.create-release.outputs.version }}.iso"
-          mv truthdb-installer-v${{ needs.create-release.outputs.version }}.iso.sha256 "dist/truthdb-installer-v${{ needs.create-release.outputs.version }}.iso.sha256"
+
+      # Hash the ISO under its published name, so `sha256sum -c` works on a
+      # download of the two release assets.
+      - name: Generate checksum
+        working-directory: dist
+        run: |
+          sha256sum truthdb-installer-v${{ needs.create-release.outputs.version }}.iso > truthdb-installer-v${{ needs.create-release.outputs.version }}.iso.sha256
+          cat truthdb-installer-v${{ needs.create-release.outputs.version }}.iso.sha256
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
