@@ -28,6 +28,29 @@ INSTALLER_REPO="${INSTALLER_REPO:-Truthdb/installer}"
 TRUTHDB_REPO="${TRUTHDB_REPO:-Truthdb/truthdb}"
 
 ISO_NAME="${ISO_NAME:-truthdb-installer.iso}"
+
+# The container runs as root, so everything it writes into the mounted
+# workspace would end up owned by root. Hand it back to the user who started
+# the build (build_in_container.sh passes HOST_UID/HOST_GID).
+restore_workspace_ownership() {
+  [[ -n "${HOST_UID:-}" && -n "${HOST_GID:-}" ]] || return 0
+  local path
+  for path in \
+    /work/installer/target \
+    /work/truthdb/target \
+    /work/installer-iso/rootfs \
+    /work/installer-iso/iso-root \
+    /work/installer-iso/initrd.img \
+    /work/installer-iso/installer-bin \
+    /work/installer-iso/kernel-bin \
+    "/work/installer-iso/${ISO_NAME}"
+  do
+    if [[ -e "$path" ]]; then
+      chown -R "${HOST_UID}:${HOST_GID}" "$path"
+    fi
+  done
+}
+
 ROOTFS_PAYLOAD="${ROOTFS_PAYLOAD:-}"
 
 case "${INPUT_MODE}" in
@@ -63,7 +86,7 @@ cleanup_generated_payload() {
   rm -rf /tmp/truthdb-installer-rootfs /tmp/debian-minbase-amd64-bookworm.tar.zst
 }
 
-trap cleanup_generated_payload EXIT
+trap 'cleanup_generated_payload; restore_workspace_ownership' EXIT
 
 curl_args=(-fsSL -H "Accept: application/vnd.github+json")
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then
