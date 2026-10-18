@@ -113,17 +113,23 @@ test -x truthdb-dist/truthdb
 test -f truthdb-dist/truthdb.service
 
 run_as_root install -d \
-  "${ROOTFS_DIR}/usr/local/bin" \
+  "${ROOTFS_DIR}/usr/bin" \
   "${ROOTFS_DIR}/lib/systemd/system" \
   "${ROOTFS_DIR}/etc/systemd/system/multi-user.target.wants"
-run_as_root install -m 0755 truthdb-dist/truthdb "${ROOTFS_DIR}/usr/local/bin/truthdb"
+run_as_root install -m 0755 truthdb-dist/truthdb "${ROOTFS_DIR}/usr/bin/truthdb"
 run_as_root install -m 0644 truthdb-dist/truthdb.service "${ROOTFS_DIR}/lib/systemd/system/truthdb.service"
 run_as_root ln -sf /lib/systemd/system/truthdb.service \
   "${ROOTFS_DIR}/etc/systemd/system/multi-user.target.wants/truthdb.service"
 
-test -x "${ROOTFS_DIR}/usr/local/bin/truthdb"
+# The unit runs as User=truthdb. Create it as a no-login system user, the same
+# way the .deb's postinst does.
+run_as_root chroot "${ROOTFS_DIR}" /usr/sbin/useradd --system --user-group \
+  --home-dir /var/lib/truthdb --no-create-home --shell /usr/sbin/nologin truthdb
+
+test -x "${ROOTFS_DIR}/usr/bin/truthdb"
 test -f "${ROOTFS_DIR}/lib/systemd/system/truthdb.service"
 test -L "${ROOTFS_DIR}/etc/systemd/system/multi-user.target.wants/truthdb.service"
+grep -q '^truthdb:.*:/var/lib/truthdb:/usr/sbin/nologin$' "${ROOTFS_DIR}/etc/passwd"
 
 run_as_root rm -rf "${ROOTFS_DIR}/var/lib/apt/lists/"* || true
 run_as_root rm -rf "${ROOTFS_DIR}/var/cache/apt/archives/"*.deb || true

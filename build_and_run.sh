@@ -208,7 +208,7 @@ if [[ -z "$ROOTFS_PAYLOAD" && "$BUILD_ROOTFS_PAYLOAD" == "1" ]]; then
   echo "ROOTFS_PAYLOAD not set; building Debian rootfs payload locally"
   chmod +x ./build_rootfs_payload.sh
   export TRUTHDB_BIN=/work/truthdb/target/release/truthdb
-  export TRUTHDB_SERVICE=/work/truthdb/truthdb.service
+  export TRUTHDB_SERVICE=/work/truthdb/packaging/truthdb.service
   export TRUTHDB_REPO
   export TRUTHDB_TAG
   export TRUTHDB_SOURCE
