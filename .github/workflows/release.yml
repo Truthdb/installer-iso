@@ -62,176 +62,21 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # Every input comes from the release with this same tag (release-iso
-      # tags all repos with one version), never from "latest".
-      RELEASE_TAG: ${{ needs.create-release.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            ca-certificates curl git \
-            build-essential pkg-config \
-            cpio zstd \
-            busybox-static \
-            util-linux \
-            fdisk \
-            parted \
-            e2fsprogs \
-            efibootmgr \
-            debootstrap debian-archive-keyring \
-            python3 \
-            systemd \
-            systemd-boot-efi \
-            grub-common \
-            grub-pc-bin \
-            grub-efi-amd64-bin \
-            file \
-            xorriso \
-            dosfstools mtools \
-            jq
 
-      - name: Free disk space (runner)
-        run: |
-          set -euo pipefail
-          echo "==> Disk usage (before cleanup)"
-          df -h
-
-          # GitHub-hosted runners ship large preinstalls we don't need.
-          sudo rm -rf /usr/share/dotnet || true
-          sudo rm -rf /usr/local/lib/android || true
-          sudo rm -rf /opt/ghc || true
-
-          # Reduce apt footprint.
-          sudo apt-get clean
-          sudo rm -rf /var/lib/apt/lists/*
-
-          echo "==> Disk usage (after cleanup)"
-          df -h
-
-      - name: Build Debian rootfs payload (bookworm, amd64)
-        run: |
-          set -euo pipefail
-
-          echo "==> Disk usage (before debootstrap)"
-          df -h
-
-          chmod +x ./build_rootfs_payload.sh
-          export TRUTHDB_SOURCE=release
-          export TRUTHDB_REPO=Truthdb/truthdb
-          export TRUTHDB_TAG="${RELEASE_TAG}"
-          export ROOTFS_DIR="${PWD}/debian-rootfs"
-          export PAYLOAD_PATH="${PWD}/debian-minbase-amd64-bookworm.tar.zst"
-          ./build_rootfs_payload.sh
-
-          echo "==> Disk usage (after packing payload)"
-          df -h
-
-          ls -lh "${PAYLOAD_PATH}"
-          echo "ROOTFS_PAYLOAD=${PAYLOAD_PATH}" >> "$GITHUB_ENV"
-      
-      - name: Download matching installer binary
-        run: |
-          set -euo pipefail
-          echo "Resolving installer release ${RELEASE_TAG}"
-
-          RELEASE=$(curl -fsSL \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/Truthdb/installer/releases/tags/${RELEASE_TAG}")
-
-          DEP_TAG=$(echo "$RELEASE" | jq -r '.tag_name')
-          echo "Using installer release: ${DEP_TAG}"
-          
-          # Download the installer binary
-          DOWNLOAD_URL=$(echo "$RELEASE" | jq -r '.assets // [] | .[] | select(.name | contains("truthdb-installer")) | select(.name | endswith(".tar.gz")) | .browser_download_url' | head -n 1)
-          CHECKSUM_URL=$(echo "$RELEASE" | jq -r '.assets // [] | .[] | select(.name | contains("truthdb-installer")) | select(.name | endswith(".sha256")) | .browser_download_url' | head -n 1)
-          
-          if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
-            echo "No installer binary found in release"
-            exit 1
-          fi
-          if [ -z "$CHECKSUM_URL" ] || [ "$CHECKSUM_URL" = "null" ]; then
-            echo "No installer checksum found in release"
-            exit 1
-          fi
-          
-          echo "Downloading installer from: $DOWNLOAD_URL"
-          mkdir -p installer-bin
-          cd installer-bin
-          curl -fsSL -o installer.tar.gz "$DOWNLOAD_URL"
-          curl -fsSL -o truthdb-installer.sha256 "$CHECKSUM_URL"
-          tar xzf installer.tar.gz
-          expected_installer_sha=$(awk 'NR==1 {print $1}' truthdb-installer.sha256)
-          actual_installer_sha=$(sha256sum truthdb-installer | awk '{print $1}')
-          if [ -z "$expected_installer_sha" ] || [ "$expected_installer_sha" != "$actual_installer_sha" ]; then
-            echo "ERROR: installer checksum verification failed"
-            echo "Expected: ${expected_installer_sha:-<empty>}"
-            echo "Actual:   $actual_installer_sha"
-            exit 1
-          fi
-          chmod +x truthdb-installer
-          cd ..
-          
-          # Verify the binary exists
-          ls -lh installer-bin/truthdb-installer
-          file installer-bin/truthdb-installer
-      
-      - name: Download matching kernel
-        run: |
-          set -euo pipefail
-          echo "Resolving installer-kernel release ${RELEASE_TAG}"
-
-          RELEASE=$(curl -fsSL \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/Truthdb/installer-kernel/releases/tags/${RELEASE_TAG}")
-
-          DEP_TAG=$(echo "$RELEASE" | jq -r '.tag_name')
-          echo "Using installer-kernel release: ${DEP_TAG}"
-          
-          # Download the kernel (BOOTX64.EFI)
-          DOWNLOAD_URL=$(echo "$RELEASE" | jq -r '.assets // [] | .[] | select(.name == "BOOTX64.EFI") | .browser_download_url' | head -n 1)
-          CHECKSUM_URL=$(echo "$RELEASE" | jq -r '.assets // [] | .[] | select(.name == "BOOTX64.EFI.sha256") | .browser_download_url' | head -n 1)
-          
-          if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
-            echo "No BOOTX64.EFI found in release"
-            exit 1
-          fi
-          if [ -z "$CHECKSUM_URL" ] || [ "$CHECKSUM_URL" = "null" ]; then
-            echo "No BOOTX64.EFI.sha256 found in release"
-            exit 1
-          fi
-          
-          echo "Downloading kernel from: $DOWNLOAD_URL"
-          mkdir -p kernel-bin
-          curl -fsSL -o kernel-bin/BOOTX64.EFI "$DOWNLOAD_URL"
-          curl -fsSL -o kernel-bin/BOOTX64.EFI.sha256 "$CHECKSUM_URL"
-          (
-            cd kernel-bin
-            sha256sum -c BOOTX64.EFI.sha256
-          )
-          
-          # Verify the kernel exists
-          ls -lh kernel-bin/BOOTX64.EFI
-          file kernel-bin/BOOTX64.EFI
-      
+      # The same script developers run. Every input comes from the release with
+      # this same tag (release-iso tags all repos with one version), never from
+      # "latest".
       - name: Build ISO
-        run: |
-          export KERNEL_SRC="${PWD}/kernel-bin/BOOTX64.EFI"
-          export INSTALLER_BIN="${PWD}/installer-bin/truthdb-installer"
-          export ROOTFS_PAYLOAD="${ROOTFS_PAYLOAD}"
-          export ISO_NAME="truthdb-installer.iso"
+        env:
+          INPUT_MODE: release
+          KERNEL_TAG: ${{ needs.create-release.outputs.tag }}
+          INSTALLER_TAG: ${{ needs.create-release.outputs.tag }}
+          TRUTHDB_TAG: ${{ needs.create-release.outputs.tag }}
+          ISO_NAME: truthdb-installer.iso
+        run: ./build_in_container.sh
 
-          ls -lh "$KERNEL_SRC" "$INSTALLER_BIN" "$ROOTFS_PAYLOAD"
-          chmod +x ./build_iso.sh
-          ./build_iso.sh
-
-          rm -f "$ROOTFS_PAYLOAD" || true
-          rm -rf installer-bin kernel-bin || true
-      
       - name: Rename ISO with version
         run: |
           mkdir -p dist
@@ -252,9 +97,19 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  # Nothing is attached to the release unless the ISO verifies against its
+  # checksum and installs.
+  e2e:
+    name: Install test
+    needs: [create-release, build]
+    uses: ./.github/workflows/e2e.yml
+    with:
+      iso-artifact: release-assets
+      release-tag: ${{ needs.create-release.outputs.tag }}
+
   upload:
     name: Upload
-    needs: [create-release, build]
+    needs: [create-release, build, e2e]
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
