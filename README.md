@@ -42,6 +42,8 @@ This will:
 - `INPUT_MODE`: `dev` or `release`. `dev` builds local workspace binaries by default; `release` uses published release artifacts by default.
 - `KERNEL_SRC`: path to a Linux kernel image. If unset, downloads the current `BOOTX64.EFI` kernel release asset and uses it as the installer kernel.
 - `KERNEL_TAG`: if set (e.g. `v1.2.3`), downloads that exact `installer-kernel` release asset.
+- `INSTALLER_TAG`: if set, downloads that exact `installer` release (release mode).
+- `TRUTHDB_TAG`: if set, downloads that exact `truthdb` release for the payload (`TRUTHDB_SOURCE=release`).
 - `KERNEL_REPO`: GitHub repo to query for installer-kernel releases.
 - `INSTALLER_REPO`: GitHub repo to query for installer releases.
 - `TRUTHDB_REPO`: GitHub repo to query for truthdb releases.
@@ -62,6 +64,10 @@ These variables can also be set in front of `./build_in_container.sh`, for examp
 To build locally but use the latest published `truthdb` / `installer` / `installer-kernel` release artifacts instead of local workspace binaries:
 
 `INPUT_MODE=release ./build_in_container.sh`
+
+To pin all three to one release instead of the latest:
+
+`INPUT_MODE=release KERNEL_TAG=v1.2.3 INSTALLER_TAG=v1.2.3 TRUTHDB_TAG=v1.2.3 ./build_in_container.sh`
 
 To force a QEMU boot test from inside the container:
 
@@ -85,13 +91,13 @@ On tag pushes (`v*`), the release workflow:
 
 - Builds a Debian (bookworm/amd64) minbase payload via `debootstrap`
 - Uses the shared `build_rootfs_payload.sh` implementation in `TRUTHDB_SOURCE=release` mode
-- Downloads the current latest released `truthdb`, `installer`, and `installer-kernel` artifacts and verifies their published checksums
+- Downloads the `truthdb`, `installer`, and `installer-kernel` releases with the same tag as this release and verifies their published checksums
 - Embeds the payload at `/payload/debian-minbase-amd64-bookworm.tar.zst` in initramfs
 - Copies required external tools (partitioning, filesystems, tar/zstd, chroot, efibootmgr, systemd-boot EFI bits) into initramfs
 - Builds a GRUB boot menu with normal, safe-graphics, debug, serial-console, and rescue entries
 - Produces `truthdb-installer-vX.Y.Z.iso` + `truthdb-installer-vX.Y.Z.iso.sha256`
 
-The workflow does not version-lock dependency artifacts. To control what gets embedded, publish the desired `truthdb`, `installer`, and `installer-kernel` releases before tagging `installer-iso`.
+The `truthdb`, `installer`, and `installer-kernel` releases with that tag must be published before `installer-iso` is tagged; `orchestrator release-iso` tags and waits for them in that order.
 
 ## License
 
