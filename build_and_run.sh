@@ -20,6 +20,9 @@ fi
 # - If KERNEL_TAG is set (e.g. v1.2.3), fetch that exact release.
 # - Otherwise, fetch the latest release.
 KERNEL_TAG="${KERNEL_TAG:-}"
+# INSTALLER_TAG and TRUTHDB_TAG pin the installer and truthdb releases the same way.
+INSTALLER_TAG="${INSTALLER_TAG:-}"
+TRUTHDB_TAG="${TRUTHDB_TAG:-}"
 KERNEL_REPO="${KERNEL_REPO:-Truthdb/installer-kernel}"
 INSTALLER_REPO="${INSTALLER_REPO:-Truthdb/installer}"
 TRUTHDB_REPO="${TRUTHDB_REPO:-Truthdb/truthdb}"
@@ -70,18 +73,23 @@ fi
 download_release_installer() {
   local release download_url checksum_url expected_sha actual_sha
 
-  echo "INSTALLER_BIN not set; downloading installer from latest release of ${INSTALLER_REPO}"
-  release="$(curl "${curl_args[@]}" "https://api.github.com/repos/${INSTALLER_REPO}/releases/latest")"
+  if [[ -n "${INSTALLER_TAG}" ]]; then
+    echo "INSTALLER_BIN not set; downloading installer from ${INSTALLER_REPO} tag ${INSTALLER_TAG}"
+    release="$(curl "${curl_args[@]}" "https://api.github.com/repos/${INSTALLER_REPO}/releases/tags/${INSTALLER_TAG}")"
+  else
+    echo "INSTALLER_BIN not set; downloading installer from latest release of ${INSTALLER_REPO}"
+    release="$(curl "${curl_args[@]}" "https://api.github.com/repos/${INSTALLER_REPO}/releases/latest")"
+  fi
 
   download_url="$(echo "${release}" | jq -r '.assets // [] | .[] | select(.name | contains("truthdb-installer")) | select(.name | endswith(".tar.gz")) | .browser_download_url' | head -n 1)"
   checksum_url="$(echo "${release}" | jq -r '.assets // [] | .[] | select(.name | contains("truthdb-installer")) | select(.name | endswith(".sha256")) | .browser_download_url' | head -n 1)"
 
   [[ -n "${download_url}" && "${download_url}" != "null" ]] || {
-    echo "ERROR: could not find installer archive asset in latest ${INSTALLER_REPO} release" >&2
+    echo "ERROR: could not find installer archive asset in the ${INSTALLER_REPO} release" >&2
     exit 1
   }
   [[ -n "${checksum_url}" && "${checksum_url}" != "null" ]] || {
-    echo "ERROR: could not find installer checksum asset in latest ${INSTALLER_REPO} release" >&2
+    echo "ERROR: could not find installer checksum asset in the ${INSTALLER_REPO} release" >&2
     exit 1
   }
 
@@ -202,6 +210,7 @@ if [[ -z "$ROOTFS_PAYLOAD" && "$BUILD_ROOTFS_PAYLOAD" == "1" ]]; then
   export TRUTHDB_BIN=/work/truthdb/target/release/truthdb
   export TRUTHDB_SERVICE=/work/truthdb/truthdb.service
   export TRUTHDB_REPO
+  export TRUTHDB_TAG
   export TRUTHDB_SOURCE
   ROOTFS_DIR=/tmp/truthdb-installer-rootfs \
   PAYLOAD_PATH=/tmp/debian-minbase-amd64-bookworm.tar.zst \

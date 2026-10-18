@@ -4,6 +4,7 @@ set -euo pipefail
 export DEBIAN_FRONTEND="${DEBIAN_FRONTEND:-noninteractive}"
 
 TRUTHDB_REPO="${TRUTHDB_REPO:-Truthdb/truthdb}"
+TRUTHDB_TAG="${TRUTHDB_TAG:-}"  # release to download (e.g. v1.2.3); empty = latest
 TRUTHDB_BIN="${TRUTHDB_BIN:-}"
 TRUTHDB_SERVICE="${TRUTHDB_SERVICE:-}"
 TRUTHDB_SOURCE="${TRUTHDB_SOURCE:-auto}"  # auto|local|release
@@ -74,18 +75,23 @@ if [[ "${use_local_truthdb}" = "1" ]]; then
   cp "${TRUTHDB_BIN}" truthdb-dist/truthdb
   cp "${TRUTHDB_SERVICE}" truthdb-dist/truthdb.service
 else
-  echo "==> Resolving latest truthdb release"
-  release="$(curl "${curl_args[@]}" "https://api.github.com/repos/${TRUTHDB_REPO}/releases/latest")"
+  if [[ -n "${TRUTHDB_TAG}" ]]; then
+    echo "==> Resolving truthdb release ${TRUTHDB_TAG}"
+    release="$(curl "${curl_args[@]}" "https://api.github.com/repos/${TRUTHDB_REPO}/releases/tags/${TRUTHDB_TAG}")"
+  else
+    echo "==> Resolving latest truthdb release"
+    release="$(curl "${curl_args[@]}" "https://api.github.com/repos/${TRUTHDB_REPO}/releases/latest")"
+  fi
 
   download_url="$(echo "${release}" | jq -r '.assets // [] | .[] | select(.name | endswith("-x86_64-linux-gnu.tar.gz")) | .browser_download_url' | head -n 1)"
   checksum_url="$(echo "${release}" | jq -r '.assets // [] | .[] | select(.name | endswith("-x86_64-linux-gnu.sha256")) | .browser_download_url' | head -n 1)"
 
   [[ -n "${download_url}" && "${download_url}" != "null" ]] || {
-    echo "ERROR: No truthdb binary archive found in latest release" >&2
+    echo "ERROR: No truthdb binary archive found in the release" >&2
     exit 1
   }
   [[ -n "${checksum_url}" && "${checksum_url}" != "null" ]] || {
-    echo "ERROR: No truthdb checksum found in latest release" >&2
+    echo "ERROR: No truthdb checksum found in the release" >&2
     exit 1
   }
 

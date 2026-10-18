@@ -62,6 +62,9 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Every input comes from the release with this same tag (release-iso
+      # tags all repos with one version), never from "latest".
+      RELEASE_TAG: ${{ needs.create-release.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       
@@ -118,6 +121,7 @@ jobs:
           chmod +x ./build_rootfs_payload.sh
           export TRUTHDB_SOURCE=release
           export TRUTHDB_REPO=Truthdb/truthdb
+          export TRUTHDB_TAG="${RELEASE_TAG}"
           export ROOTFS_DIR="${PWD}/debian-rootfs"
           export PAYLOAD_PATH="${PWD}/debian-minbase-amd64-bookworm.tar.zst"
           ./build_rootfs_payload.sh
@@ -131,12 +135,12 @@ jobs:
       - name: Download matching installer binary
         run: |
           set -euo pipefail
-          echo "Resolving latest installer release"
+          echo "Resolving installer release ${RELEASE_TAG}"
 
           RELEASE=$(curl -fsSL \
             -H "Authorization: Bearer ${GITHUB_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/Truthdb/installer/releases/latest")
+            "https://api.github.com/repos/Truthdb/installer/releases/tags/${RELEASE_TAG}")
 
           DEP_TAG=$(echo "$RELEASE" | jq -r '.tag_name')
           echo "Using installer release: ${DEP_TAG}"
@@ -178,12 +182,12 @@ jobs:
       - name: Download matching kernel
         run: |
           set -euo pipefail
-          echo "Resolving latest installer-kernel release"
+          echo "Resolving installer-kernel release ${RELEASE_TAG}"
 
           RELEASE=$(curl -fsSL \
             -H "Authorization: Bearer ${GITHUB_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/Truthdb/installer-kernel/releases/latest")
+            "https://api.github.com/repos/Truthdb/installer-kernel/releases/tags/${RELEASE_TAG}")
 
           DEP_TAG=$(echo "$RELEASE" | jq -r '.tag_name')
           echo "Using installer-kernel release: ${DEP_TAG}"
