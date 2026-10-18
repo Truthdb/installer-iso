@@ -143,6 +143,22 @@ jobs:
           ls -lh "$KERNEL_SRC" "$INSTALLER_BIN"
           chmod +x ./build_iso.sh
           ./build_iso.sh
+
+      # The installer runs its tools with PATH=/bin:/sbin:/usr/bin:/usr/sbin. A
+      # tool copied anywhere else is unreachable at install time.
+      - name: Check initramfs tools are on the installer's PATH
+        run: |
+          set -euo pipefail
+          zstd -dc initrd.img | cpio -t --quiet > initrd.list
+          missing=0
+          for cmd in wipefs sfdisk partprobe blkid mkfs.vfat mkfs.ext4 mount umount tar zstd chroot efibootmgr; do
+            if ! grep -qxE "(bin|sbin|usr/bin|usr/sbin)/${cmd}" initrd.list; then
+              echo "ERROR: ${cmd} is not on the installer's PATH in the initramfs:"
+              grep -E "/${cmd}\$" initrd.list || true
+              missing=1
+            fi
+          done
+          exit "${missing}"
       
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4

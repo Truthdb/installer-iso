@@ -17,15 +17,27 @@ GRUB_CFG_TEMPLATE="${SCRIPT_DIR}/grub/grub.cfg"
 [[ -f "${INIT_TEMPLATE}" ]] || { echo "ERROR: missing init template: ${INIT_TEMPLATE}"; exit 1; }
 [[ -f "${GRUB_CFG_TEMPLATE}" ]] || { echo "ERROR: missing GRUB config template: ${GRUB_CFG_TEMPLATE}"; exit 1; }
 
+# initramfs/init and the installer run tools with PATH=/bin:/sbin:/usr/bin:/usr/sbin.
+# A build host may keep a tool elsewhere (GitHub's runners have zstd in
+# /usr/local/bin), so a binary from any other directory goes to /usr/bin.
+initramfs_bin_path() {
+  case "$(dirname "$1")" in
+    /bin|/sbin|/usr/bin|/usr/sbin) printf '%s' "$1" ;;
+    *) printf '/usr/bin/%s' "$(basename "$1")" ;;
+  esac
+}
+
 copy_bin_with_libs() {
   local src="$1"
+  local dest
   if [[ ! -x "$src" ]]; then
     echo "ERROR: required tool not found or not executable: $src" >&2
     exit 1
   fi
 
-  mkdir -p "rootfs$(dirname "$src")"
-  cp -L "$src" "rootfs$src"
+  dest="$(initramfs_bin_path "$src")"
+  mkdir -p "rootfs$(dirname "$dest")"
+  cp -L "$src" "rootfs$dest"
 
   ldd "$src" 2>/dev/null \
     | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^\//) print $i }' \
