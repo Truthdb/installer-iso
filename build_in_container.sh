@@ -41,11 +41,14 @@ translate_workspace_path() {
 docker_args=(
   run
   --rm
-  -it
   --platform=linux/amd64
   -v "${WORKSPACE_ROOT}:/work"
   -w /work/installer-iso
 )
+# Interactive only when there is a terminal; CI has none.
+if [[ -t 0 ]]; then
+  docker_args+=(-it)
+fi
 
 for name in \
   KERNEL_SRC \
@@ -58,6 +61,7 @@ for name in \
   KERNEL_REPO \
   INSTALLER_REPO \
   TRUTHDB_REPO \
+  GITHUB_TOKEN \
   ISO_NAME \
   BUILD_INSTALLER \
   BUILD_TRUTHDB \
