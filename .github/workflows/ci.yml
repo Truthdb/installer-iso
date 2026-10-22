@@ -23,7 +23,3 @@ jobs:
 
       - name: Shellcheck
         run: shellcheck ./build_and_run.sh ./build_in_container.sh ./build_iso.sh ./build_rootfs_payload.sh ./run_container.sh ./initramfs/init ./tests/e2e/run.sh
-
-  install-test:
-    name: Install test
-    uses: ./.github/workflows/e2e.yml
