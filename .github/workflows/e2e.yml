@@ -1,28 +1,20 @@
 name: Install test
 
-# Builds an installer ISO (or takes one built earlier in the same run), installs
-# it onto a blank disk in QEMU, and checks the installed system. Called from the
-# CI of installer-iso, installer and truthdb, and from the installer-iso release.
+# Takes the installer ISO the release built earlier in the same run, installs it
+# onto a blank disk in QEMU, and checks the installed system. Called from the
+# installer-iso release only: nothing is published unless it passes.
 
 on:
   workflow_call:
     inputs:
-      truthdb-from-source:
-        description: Build truthdb from the calling repository instead of using a release
-        type: boolean
-        default: false
-      installer-from-source:
-        description: Build the installer from the calling repository instead of using a release
-        type: boolean
-        default: false
       release-tag:
-        description: Use the releases with this tag for prebuilt components (empty = latest)
+        description: The release whose truthdb-cli checks the installed server
         type: string
-        default: ""
+        required: true
       iso-artifact:
-        description: Test this ISO artifact (with its .sha256) from the same run instead of building one
+        description: The ISO artifact (with its .sha256) from the same run
         type: string
-        default: ""
+        required: true
 
 permissions:
   contents: read
@@ -40,72 +32,28 @@ jobs:
       - name: Check out installer-iso
         uses: actions/checkout@v4
         with:
-          repository: Truthdb/installer-iso
-          ref: ${{ github.repository == 'Truthdb/installer-iso' && github.sha || 'main' }}
           path: installer-iso
-
-      - name: Check out truthdb from the caller
-        if: inputs.truthdb-from-source
-        uses: actions/checkout@v4
-        with:
-          path: truthdb
-
-      - name: Check out the installer from the caller
-        if: inputs.installer-from-source
-        uses: actions/checkout@v4
-        with:
-          path: installer
 
       - name: Install test tools
         run: |
           sudo apt-get update
           sudo apt-get install -y qemu-system-x86 qemu-utils ovmf mtools fdisk xorriso zstd cpio
 
-      - name: Build truthdb and truthdb-cli from source
-        if: inputs.truthdb-from-source
-        # The same toolchain image as the truthdb release, so the binary runs
-        # on the Debian bookworm payload.
-        run: |
-          docker run --rm -v "${PWD}/truthdb:/src" -w /src rust:1.92-bookworm \
-            cargo build --release -p truthdb -p truthdb-cli
-          sudo chown -R "$(id -u):$(id -g)" truthdb/target
-          echo "TRUTHDB_CLI=${PWD}/truthdb/target/release/truthdb-cli" >> "$GITHUB_ENV"
-
       - name: Fetch truthdb-cli from the release
-        if: ${{ !inputs.truthdb-from-source }}
         run: |
           set -euo pipefail
           mkdir -p cli
-          # No tag = the latest release.
           gh release download ${RELEASE_TAG} -R Truthdb/truthdb -p 'truthdb-cli_*_amd64.deb' -D cli
           dpkg-deb -x cli/truthdb-cli_*_amd64.deb cli/root
           echo "TRUTHDB_CLI=${PWD}/cli/root/usr/bin/truthdb-cli" >> "$GITHUB_ENV"
 
-      - name: Build the ISO
-        if: inputs.iso-artifact == ''
-        working-directory: installer-iso
-        env:
-          INPUT_MODE: release
-          ISO_NAME: truthdb-e2e.iso
-          BUILD_TRUTHDB: "0"
-          TRUTHDB_SOURCE: ${{ inputs.truthdb-from-source && 'local' || 'release' }}
-          BUILD_INSTALLER: ${{ inputs.installer-from-source && '1' || '0' }}
-          KERNEL_TAG: ${{ inputs.release-tag }}
-          INSTALLER_TAG: ${{ inputs.release-tag }}
-          TRUTHDB_TAG: ${{ inputs.release-tag }}
-        run: |
-          ./build_in_container.sh
-          echo "ISO=${PWD}/truthdb-e2e.iso" >> "$GITHUB_ENV"
-
       - name: Download the ISO artifact
-        if: inputs.iso-artifact != ''
         uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.iso-artifact }}
           path: iso
 
       - name: Verify the ISO checksum
-        if: inputs.iso-artifact != ''
         working-directory: iso
         run: |
           set -euo pipefail
